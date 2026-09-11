@@ -4,8 +4,6 @@ BIOS Build Assistant is a VS Code extension designed to help BIOS and firmware t
 
 This project is built to reduce repetitive manual work during BIOS version updates and build preparation. It helps users manage version fields, trigger common build actions, and keep BIOS-related information in a more structured and repeatable way.
 
-This is the first release of the project, version 0.1.2.
-
 ## What this project does
 
 BIOS Build Assistant is meant for teams that need to:
@@ -24,12 +22,7 @@ BIOS Build Assistant is meant for teams that need to:
 - Simple UI for managing the fields involved in build updates
 - SVN update and clean/revert support
 
-## Current version
 
-- Version: 0.1.2
-- Status: First public version
-
-This release is the initial version of the tool and focuses on the core workflow needed for BIOS build assistance.
 
 ## Who this is for
 
@@ -48,4 +41,4 @@ This extension is focused on BIOS engineering teams, firmware engineers, and any
 
 ## Project status
 
-The project is currently in its first release stage. The focus is on making BIOS build workflows easier and more consistent for daily engineering work.
+The project is in an early but usable release stage. The focus is on making BIOS build workflows easier, more consistent, and more approachable for daily engineering work.

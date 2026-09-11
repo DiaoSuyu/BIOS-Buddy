@@ -371,8 +371,13 @@ class BiosPanelProvider {
                     item.tooltip = element.tooltip;
                 if (element.cfgKey)
                     item.contextValue = 'infoField';
-                else if (element.dndGroup === 'paths')
-                    item.contextValue = 'pathItem';
+                else if (element.dndGroup === 'paths') {
+                    item.contextValue = element.commandId === 'configureDefFile' ? 'pathDefFile' : 'pathBuildBat';
+                    item.command = element.commandId ? {
+                        command: `biosBuildAssistant.${element.commandId}`,
+                        title: 'Configure path',
+                    } : undefined;
+                }
                 let iconName;
                 if (element.icon) {
                     iconName = element.icon;
@@ -461,8 +466,8 @@ class BiosPanelProvider {
                 const defPath = resolvePath(cfg.get('defFile', ''));
                 const batPath = resolvePath(cfg.get('buildBat', ''));
                 const items = [
-                    { kind: 'info', label: 'BIOS Version File', desc: defPath || '(not configured)', tooltip: defPath, filePath: defPath && fs.existsSync(defPath) ? defPath : undefined, dndId: 'defFile', dndGroup: 'paths', icon: 'file-code' },
-                    { kind: 'info', label: 'Build Script', desc: batPath || '(not configured)', tooltip: batPath, filePath: batPath && fs.existsSync(batPath) ? batPath : undefined, dndId: 'buildBat', dndGroup: 'paths', icon: 'play' },
+                    { kind: 'info', label: 'BIOS Version File', desc: defPath || '(not configured)', tooltip: defPath, filePath: defPath && fs.existsSync(defPath) ? defPath : undefined, dndId: 'defFile', dndGroup: 'paths', icon: 'file-code', commandId: 'configureDefFile' },
+                    { kind: 'info', label: 'Build Script', desc: batPath || '(not configured)', tooltip: batPath, filePath: batPath && fs.existsSync(batPath) ? batPath : undefined, dndId: 'buildBat', dndGroup: 'paths', icon: 'play', commandId: 'configureBuildBat' },
                 ];
                 return sortByDnd(items, getItemOrder(cfg).paths, x => x.kind === 'info' ? x.dndId : undefined);
             }
@@ -544,7 +549,7 @@ function activate(context) {
         'svn revert -R .',
         'svn cleanup --remove-unversioned .',
         'svn status .',
-    ])), vscode.commands.registerCommand('biosBuildAssistant.configurePaths', () => configurePaths()), vscode.commands.registerCommand('biosBuildAssistant.addInfoField', () => addInfoField()), vscode.commands.registerCommand('biosBuildAssistant.resetInfoFields', () => resetInfoFields()), vscode.commands.registerCommand('biosBuildAssistant.removeInfoField', (el) => removeInfoField(el)), vscode.commands.registerCommand('biosBuildAssistant.moveItemUp', (el) => moveItem(el, -1)), vscode.commands.registerCommand('biosBuildAssistant.moveItemDown', (el) => moveItem(el, 1)), vscode.commands.registerCommand('biosBuildAssistant.refresh', () => panelProvider.refresh()), vscode.workspace.onDidChangeConfiguration(e => {
+    ])), vscode.commands.registerCommand('biosBuildAssistant.configurePaths', () => configurePaths()), vscode.commands.registerCommand('biosBuildAssistant.configureDefFile', () => configurePath('defFile')), vscode.commands.registerCommand('biosBuildAssistant.configureBuildBat', () => configurePath('buildBat')), vscode.commands.registerCommand('biosBuildAssistant.addInfoField', () => addInfoField()), vscode.commands.registerCommand('biosBuildAssistant.resetInfoFields', () => resetInfoFields()), vscode.commands.registerCommand('biosBuildAssistant.removeInfoField', (el) => removeInfoField(el)), vscode.commands.registerCommand('biosBuildAssistant.moveItemUp', (el) => moveItem(el, -1)), vscode.commands.registerCommand('biosBuildAssistant.moveItemDown', (el) => moveItem(el, 1)), vscode.commands.registerCommand('biosBuildAssistant.refresh', () => panelProvider.refresh()), vscode.workspace.onDidChangeConfiguration(e => {
         if (e.affectsConfiguration('biosBuildAssistant'))
             panelProvider.refresh();
     }));
@@ -742,6 +747,34 @@ function resolveSvnCwd() {
         return path.dirname(batPath);
     return '';
 }
+async function configurePath(key) {
+    const label = key === 'defFile' ? 'Bios Version File' : 'Build Script';
+    const filters = key === 'defFile'
+        ? { 'Config files': ['def'], 'All files': ['*'] }
+        : { 'Batch files': ['bat', 'cmd'], 'All files': ['*'] };
+    const defaultUri = getConfigFolder(key);
+    const uris = await vscode.window.showOpenDialog({
+        canSelectFiles: true,
+        canSelectFolders: false,
+        canSelectMany: false,
+        filters,
+        defaultUri,
+        title: `Select ${label}`,
+    });
+    if (!uris || uris.length === 0)
+        return;
+    let rawPath = uris[0].fsPath;
+    const ws = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (ws && rawPath.startsWith(ws)) {
+        rawPath = '${workspaceFolder}' + rawPath.substring(ws.length);
+    }
+    const configKey = `biosBuildAssistant.${key}`;
+    const ok = writeWorkspaceSetting(configKey, rawPath);
+    if (!ok)
+        return;
+    panelProvider.refresh();
+    vscode.window.showInformationMessage(`BIOS Build Assistant: ${label} set to ${rawPath}`);
+}
 async function configurePaths() {
     const choice = await vscode.window.showQuickPick([
         { label: 'Bios Version File', key: 'defFile' },
@@ -751,32 +784,7 @@ async function configurePaths() {
     });
     if (!choice)
         return;
-    const filters = choice.key === 'defFile'
-        ? { 'Config files': ['def'], 'All files': ['*'] }
-        : { 'Batch files': ['bat', 'cmd'], 'All files': ['*'] };
-    const defaultUri = getConfigFolder(choice.key);
-    const uris = await vscode.window.showOpenDialog({
-        canSelectFiles: true,
-        canSelectFolders: false,
-        canSelectMany: false,
-        filters,
-        defaultUri,
-        title: `Select ${choice.label}`,
-    });
-    if (!uris || uris.length === 0)
-        return;
-    let rawPath = uris[0].fsPath;
-    const ws = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-    if (ws && rawPath.startsWith(ws)) {
-        rawPath = '${workspaceFolder}' + rawPath.substring(ws.length);
-    }
-    const key = `biosBuildAssistant.${choice.key}`;
-    const ok = writeWorkspaceSetting(key, rawPath);
-    if (!ok) {
-        return;
-    }
-    panelProvider.refresh();
-    vscode.window.showInformationMessage(`BIOS Build Assistant: ${choice.label} set to ${rawPath}`);
+    await configurePath(choice.key);
 }
 function getConfigFolder(key) {
     const cfg = vscode.workspace.getConfiguration('biosBuildAssistant');
