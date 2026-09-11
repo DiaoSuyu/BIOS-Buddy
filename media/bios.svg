@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+  <!-- Chip body -->
+  <rect x="5" y="4" width="14" height="16" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/>
+  <!-- Pins top -->
+  <g stroke="currentColor" stroke-width="1.6">
+    <line x1="8"  y1="1"  x2="8"  y2="4"/>
+    <line x1="12" y1="1"  x2="12" y2="4"/>
+    <line x1="16" y1="1"  x2="16" y2="4"/>
+  </g>
+  <!-- Pins bottom -->
+  <g stroke="currentColor" stroke-width="1.6">
+    <line x1="8"  y1="20" x2="8"  y2="23"/>
+    <line x1="12" y1="20" x2="12" y2="23"/>
+    <line x1="16" y1="20" x2="16" y2="23"/>
+  </g>
+  <!-- Pins left -->
+  <g stroke="currentColor" stroke-width="1.6">
+    <line x1="2" y1="8"  x2="5" y2="8"/>
+    <line x1="2" y1="12" x2="5" y2="12"/>
+    <line x1="2" y1="16" x2="5" y2="16"/>
+  </g>
+  <!-- Pins right -->
+  <g stroke="currentColor" stroke-width="1.6">
+    <line x1="19" y1="8"  x2="22" y2="8"/>
+    <line x1="19" y1="12" x2="22" y2="12"/>
+    <line x1="19" y1="16" x2="22" y2="16"/>
+  </g>
+  <!-- Version bump indicator (arrow inside chip) -->
+  <g stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 16 V9"/>
+    <path d="M9 12 l3 -3 l3 3"/>
+  </g>
+</svg>
