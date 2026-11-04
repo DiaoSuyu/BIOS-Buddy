@@ -1,0 +1,3543 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:;">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Text Comparer</title>
+<style>
+  :root{
+    /* Same palette as the Binary Editor: A blue / B purple, differences red, additions green, centre line neutral grey */
+    --bg:var(--vscode-editorWidget-background,#eef0f4);
+    --panel:var(--vscode-editor-background,#ffffff);
+    --line:var(--vscode-panel-border,#dfe2e9);
+    --line2:var(--vscode-editorWidget-border,#eceef3);
+    --text:var(--vscode-editor-foreground,#1f2430);
+    --muted:var(--vscode-descriptionForeground,#8a90a0);
+    --accent:var(--vscode-button-background,#2563eb);
+    --accent-hover:var(--vscode-button-hoverBackground,#1d4fd7);
+    --accent-soft:var(--vscode-list-hoverBackground,#eef2ff);
+    /* A / B identity colours, independent of the theme button colour: A is blue, B is purple.
+       Everything that points at a pane (tag, status letter, context-menu badge) uses these. */
+    --curA:#2563eb;
+    --curB:#7c3aed;
+    --group-bg:#fcfcfe; --head-bg:#f7f8fb; --off-bg:#f2f3f7;
+    --input-bg:var(--vscode-input-background,#fff);
+    --row-alt:var(--vscode-editor-lineHighlightBackground,#fafbfd);
+    --soft-a:#fafcff; --soft-b:#fbf9ff;
+    --soft-line-a:#c7d7ff; --soft-line-b:#ddd0ff;
+    --tint-a-head:#e9f0ff; --tint-b-head:#f4f0ff;
+    --split:#c9d0dc; --split-hi:#8b94a3; --grip:#9aa3b2;
+    --gut:#dc2626;
+    --sel-a:#cfe0ff; --sel-b:#e6dcff;
+    --del-bg:rgba(220,38,38,.09); --del-ln:rgba(220,38,38,.14); --del-tx:#b91c1c; --del-mark:rgba(220,38,38,.30);
+    --ins-bg:rgba(22,163,74,.11); --ins-ln:rgba(22,163,74,.16); --ins-tx:#15803d; --ins-mark:rgba(22,163,74,.30);
+    --cur:rgba(37,99,235,.16);
+    /* Filler for the side that has no line (added / deleted rows): a faint tint plus
+       a very light 45° hairline hatch. Both are tuned to sit under the text without
+       competing with it. */
+    --empty-fill:rgba(15,23,42,.045);
+    --empty-rule:rgba(51,65,85,.16);
+    --danger:#dc2626; --danger-bg:#fef2f2;
+    /* A=B / A!=B chip: green when identical, red when not (--same-* green, --diff2-* red) */
+    --same-fg:#047857; --same-bg:#ecfdf5; --same-line:#6ee7b7;
+    --diff2-fg:#b91c1c; --diff2-bg:#fef2f2; --diff2-line:#fca5a5;
+    --thumb:rgba(120,130,150,.42); --thumb-hi:rgba(96,108,130,.78);
+    /* Column widths are written on #paneHeads / #body .row: pane A (minimap / line numbers / text) - 9px splitter - pane B */
+  }
+  body.vscode-dark, body.vscode-high-contrast{
+    /* Dark fallbacks: use --vscode-* when VS Code injects it, but opening this html elsewhere never renders black on black */
+    --bg:var(--vscode-editorWidget-background,#1e1e1e);
+    --panel:var(--vscode-editor-background,#1e1e1e);
+    --line:var(--vscode-panel-border,#3c3c3c);
+    --line2:var(--vscode-editorWidget-border,#343434);
+    --text:var(--vscode-editor-foreground,#e6e6e6);
+    --muted:var(--vscode-descriptionForeground,#a3a3a3);
+    --accent:var(--vscode-button-background,#3b82f6);
+    --accent-hover:#2563eb;
+    --accent-soft:rgba(59,130,246,.18);
+    --group-bg:var(--vscode-editorWidget-background,#252526);
+    --head-bg:var(--vscode-sideBar-background,#252526);
+    --input-bg:var(--vscode-input-background,#3c3c3c);
+    --off-bg:rgba(255,255,255,.07);
+    --row-alt:rgba(255,255,255,.045);
+    --soft-a:rgba(37,99,235,.10); --soft-b:rgba(167,139,250,.12);
+    --soft-line-a:rgba(37,99,235,.42); --soft-line-b:rgba(167,139,250,.42);
+    --tint-a-head:rgba(37,99,235,.22); --tint-b-head:rgba(167,139,250,.20);
+    --split:#3f3f3f; --split-hi:rgba(255,255,255,.72); --grip:rgba(255,255,255,.46);
+    --gut:#ef4444;
+    --sel-a:rgba(37,99,235,.34); --sel-b:rgba(167,139,250,.32);
+    --curA:#3b82f6;
+    --curB:#a78bfa;
+    --del-bg:rgba(248,81,73,.13); --del-ln:rgba(248,81,73,.22); --del-tx:#f48771; --del-mark:rgba(248,81,73,.38);
+    --ins-bg:rgba(63,185,80,.13); --ins-ln:rgba(63,185,80,.22); --ins-tx:#7ee787; --ins-mark:rgba(63,185,80,.38);
+    --cur:rgba(37,99,235,.28);
+    --empty-fill:rgba(0,0,0,.20);
+    --empty-rule:rgba(255,255,255,.10);
+    --danger-bg:rgba(220,38,38,.16);
+    --same-fg:#6ee7b7; --same-bg:rgba(110,231,183,.12); --same-line:rgba(110,231,183,.42);
+    --diff2-fg:#fca5a5; --diff2-bg:rgba(252,165,165,.13); --diff2-line:rgba(252,165,165,.42);
+    --thumb:rgba(255,255,255,.22); --thumb-hi:rgba(255,255,255,.44);
+  }
+  *{box-sizing:border-box;}
+  html,body{height:100%;}
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:"Segoe UI","Microsoft YaHei UI","Microsoft YaHei","PingFang SC","Hiragino Sans GB","Noto Sans CJK SC",sans-serif; font-size:13px;
+    display:flex; flex-direction:column; overflow:hidden;
+  }
+  button{
+    font:inherit; border:1px solid var(--line); border-radius:6px; height:28px; padding:0 10px;
+    background:var(--input-bg); color:var(--text); cursor:pointer; white-space:nowrap;
+    display:inline-flex; align-items:center; gap:5px; flex:0 0 auto;
+  }
+  button:hover:not(:disabled){background:var(--accent-soft); border-color:var(--accent);}
+  button:disabled{opacity:.45; cursor:not-allowed;}
+  button.primary{background:var(--accent); border-color:var(--accent); color:#fff; font-weight:600;}
+  button.primary:hover:not(:disabled){background:var(--accent-hover); border-color:var(--accent-hover);}
+
+  /* ===== Title bar ===== */
+  /* 43px in both tools: one number, so the band below it starts at the same place */
+  #titlebar{flex:none; background:var(--panel); border-bottom:1px solid var(--line); height:43px;
+    padding:7px 14px; display:flex; align-items:center; gap:10px;}
+  #titlebar .brand{font-weight:700; font-size:15px; letter-spacing:.4px; color:var(--accent);}
+  /* The title-bar group (about / version / language) is written the same way in all three tools:
+   same height, radius and font size, and hovering always gives "tinted fill + accent border + accent text".
+   Change it here and change it there too (Binary Editor and COM Debugger carry an identical copy). */
+  #btnAbout{height:22px; padding:0 9px; font-size:11.5px; border-radius:11px; color:var(--muted);}
+  #btnAbout:hover{background:var(--accent-soft); border-color:var(--accent); color:var(--accent);}
+  .ver{font:600 10.5px/1 Consolas,"Cascadia Mono","Courier New","Microsoft YaHei UI","Microsoft YaHei","PingFang SC","Hiragino Sans GB",monospace; color:#fff; background:var(--accent);
+    border-radius:4px; padding:3px 7px;}
+  .spacer{flex:1;}
+  #pill{font:600 11.5px/1 Consolas,"Cascadia Mono","Courier New","Microsoft YaHei UI","Microsoft YaHei","PingFang SC","Hiragino Sans GB",monospace; color:var(--muted); background:var(--head-bg);
+    border:1px solid var(--line2); border-radius:11px; padding:5px 10px; white-space:nowrap;}
+  #pill.diff{color:var(--del-tx); border-color:var(--del-ln); background:var(--del-bg);}
+  #pill.same{color:var(--ins-tx); border-color:var(--ins-ln); background:var(--ins-bg);}
+  /* The language toggle looks like the one in COM Debugger: a normal button, not shrunk into a pill */
+  #btnLang{min-width:52px; height:24px; padding:0 10px; font-size:12px; font-weight:600; border-radius:6px; justify-content:center;}
+
+  /* ===== Toolbar ===== */
+  #toolbar{flex:none; background:var(--panel); border-bottom:1px solid var(--line); padding:12px 14px 10px;
+    display:flex; flex-wrap:wrap; gap:10px; align-items:stretch;}
+  /* Same box as the Binary Editor's groups (63px tall, controls on the bottom edge), so both
+     toolbars end up the same height and the A / B rows below them line up in a split view */
+  .group{position:relative; border:1px solid var(--line2); border-radius:9px; padding:12px 9px 7px;
+    background:var(--group-bg); display:flex; gap:6px; align-items:flex-end; flex-wrap:wrap; min-height:63px;}
+  .group > .cap{position:absolute; top:-8px; left:9px; background:var(--panel); padding:0 5px;
+    font-size:11px; color:var(--muted); letter-spacing:1px;}
+  .chk{display:inline-flex; align-items:center; gap:5px; color:var(--muted); user-select:none; height:28px; font-size:12.5px;}
+  .chk input{margin:0;}
+  /* Same box as the Binary Editor's counter: a 28px inline block, so the "— / —" text
+     is vertically centred on the buttons instead of sinking to the bottom of the group
+     (the group aligns its children to flex-end, a bare inline span has no height of its
+     own), and the spaces around the slash survive - a flex container would drop them. */
+  #navPos{display:inline-block; flex:0 0 auto; min-width:64px; height:28px; line-height:28px;
+    padding:0 6px; box-sizing:border-box; text-align:center; white-space:pre;
+    font:600 12px/28px Consolas,"Cascadia Mono","Courier New","Microsoft YaHei UI","Microsoft YaHei","PingFang SC","Hiragino Sans GB",monospace;
+    color:var(--muted); font-variant-numeric:tabular-nums;}
+  #navPos b{color:var(--text);}
+  #btnList.on{background:var(--accent-soft); border-color:var(--accent); color:var(--accent); font-weight:600;}
+
+  /* ===== Body: one scroll container; pane heads, pane toolbars and the row grid share one set of columns ===== */
+  #stage{flex:1 1 auto; min-height:0; position:relative; display:flex; overflow:hidden;}
+  /* Native scrollbars are hidden everywhere: each pane draws its own (vertical + horizontal), both present, like the Binary Editor */
+  #body{flex:1 1 auto; min-height:0; overflow-y:auto; overflow-x:hidden; background:var(--panel); position:relative;
+    font:12.5px/1.5 Consolas,"Cascadia Mono","Courier New","Microsoft YaHei UI","Microsoft YaHei","PingFang SC","Hiragino Sans GB",monospace; tab-size:4; scrollbar-width:none;}
+  #body::-webkit-scrollbar{width:0; height:0;}
+  #sticky{position:sticky; top:0; z-index:6; background:var(--panel);}
+  #sticky.scrolled{box-shadow:0 3px 8px rgba(15,23,42,.10);}
+  #paneHeads, #paneEntries{display:grid; grid-template-columns:26px 58px minmax(0,var(--aw,1fr)) 9px 26px 58px minmax(0,1fr);}
+
+  /* ===== Pane frames + centre splitter (same as the Binary Editor) ===== */
+  /* Each pane has a frame: 1px pale border normally, 2px accent on the active one (A blue / B purple) */
+  .paneFrame{position:absolute; z-index:7; display:none; pointer-events:none;
+    border:1px solid var(--soft-line-a); border-radius:2px;}
+  .paneFrame.b{border-color:var(--soft-line-b);}
+  .paneFrame.on{display:block;}
+  .paneFrame.active{border:2px solid var(--accent);}
+  .paneFrame.b.active{border-color:var(--curB);}
+  /* The 9px splitter between the panes: a centre line plus a grip, with a left-right cursor */
+  #paneSplit{position:absolute; top:0; bottom:0; left:0; width:9px; z-index:9; display:none;
+    cursor:col-resize; background:var(--group-bg); touch-action:none;}
+  #paneSplit.show{display:block;}
+  #paneSplit::before{content:""; position:absolute; top:0; bottom:0; left:50%; width:1px; margin-left:-.5px;
+    background:var(--split); transition:background .12s;}
+  #paneSplit::after{content:""; position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+    width:3px; height:56px; border-radius:2px; background:var(--grip); opacity:.6;
+    box-shadow:0 0 0 1px rgba(0,0,0,.06); transition:background .12s, height .12s, opacity .12s;}
+  #paneSplit:hover::after, #paneSplit.dragging::after{background:var(--split-hi); height:112px; opacity:1;}
+  #paneSplit:hover::before, #paneSplit.dragging::before{background:var(--split-hi);}
+  #paneSplit.dragging{background:var(--row-alt);}
+  body.resizing-col{user-select:none; cursor:col-resize;}
+
+  /* ===== Scrollbars per pane (vertical on the right edge, horizontal at the bottom, both present) ===== */
+  .rail{position:absolute; z-index:8; display:block; opacity:0; pointer-events:none; touch-action:none;}
+  .rail.on{opacity:1; pointer-events:auto;}
+  .rail.v{width:11px; cursor:default;}
+  .rail.h{height:11px; cursor:default;}
+  .rail .th{position:absolute; background:var(--thumb,rgba(120,130,150,.45)); border-radius:6px;}
+  .rail.v .th{left:2px; right:2px; min-height:22px;}
+  .rail.h .th{top:2px; bottom:2px; min-width:22px;}
+  .rail:hover .th, .rail.drag .th{background:var(--thumb-hi,rgba(120,130,150,.78));}
+  body.resizing-bar{user-select:none;}
+
+  .paneHead{grid-column:1/4; display:flex; align-items:center; gap:7px; padding:4px 10px; height:28px; min-width:0;
+    overflow:hidden; background:var(--head-bg); border-bottom:1px solid var(--line); font-family:Consolas,"Cascadia Mono","Courier New","Microsoft YaHei UI","Microsoft YaHei","PingFang SC","Hiragino Sans GB",monospace; font-size:12px;}
+  #headB{grid-column:5/8;}
+  /* Pane letter: bare coloured letter, the same way the Binary Editor's header draws it
+     (it used to be a filled pill here, which made the two tools' headers look unrelated) */
+  .paneHead .tag{font:700 12px/1 Consolas,"Cascadia Mono","Courier New","Microsoft YaHei UI","Microsoft YaHei","PingFang SC","Hiragino Sans GB",monospace;
+    color:var(--curA); flex:none;}
+  /* Side word: 11px muted, the Binary Editor's .lbl metrics */
+  .paneHead .side{font-size:11px; color:var(--muted); flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis;}
+  /* The separator is a real flex item, so the 7px gap puts exactly the same space on both sides */
+  .paneHead .dot{color:var(--muted); font-weight:400; flex:none;}
+  .paneHead .act{display:none; font-size:10.5px; font-weight:700; color:#fff; background:var(--curB);
+    border-radius:4px; padding:2px 6px; flex:none;}
+  .paneHead.dirty .act{display:inline-block;}
+  .paneHead .phead{flex:1 1 auto; min-width:0; font-weight:600; color:var(--text); white-space:nowrap; overflow:hidden;
+    text-overflow:ellipsis;}
+  /* An empty signature must not leave a bare pill behind */
+  .paneHead .sig:empty{display:none;}
+  .paneHead .sig{flex:0 1 auto; min-width:0; font:11px Consolas,"Cascadia Mono","Courier New","Microsoft YaHei UI","Microsoft YaHei","PingFang SC","Hiragino Sans GB",monospace; color:var(--curA); background:var(--accent-soft);
+    border:1px solid var(--soft-line-a); border-radius:4px; padding:2px 7px; white-space:nowrap;
+    max-width:52%; overflow:hidden; text-overflow:ellipsis;}
+  #headB .tag{color:var(--curB);}
+  #headB .sig{color:var(--curB); background:var(--tint-b-head); border-color:var(--soft-line-b);}
+  #headA.active{background:var(--tint-a-head); box-shadow:inset 2px 0 0 var(--curA);}
+  #headB.active{background:var(--tint-b-head); box-shadow:inset 2px 0 0 var(--curB);}
+
+  .paneEntry{grid-column:1/4; display:flex; align-items:center; gap:5px; flex-wrap:wrap; overflow:hidden;
+    padding:6px 8px; border-bottom:1px solid var(--line); background:var(--soft-a);}
+  #entryB{grid-column:5/8; background:var(--soft-b);}
+  /* Same metrics as the Binary Editor's pane toolbar, so the two tools read alike. */
+  .paneEntry button{height:27px; padding:0 7px; font-size:11.5px; border-radius:5px;
+    flex:0 0 auto; white-space:nowrap; display:inline-flex; align-items:center; gap:4px;}
+  .paneEntry button:disabled{opacity:.4; cursor:not-allowed;}
+  .paneEntry button .ci{font-size:11.5px; line-height:1;}
+  .paneEntry .sep{flex:0 0 auto; width:1px; height:16px; background:var(--line2); margin:0 4px;}
+  /* "Open" is the busiest button in this row, but it no longer gets an A-blue / B-purple fill --
+   two big colour blocks were too loud, sitting there like the rest of the row is enough (removed on request) */
+  .paneEntry button.w{font-weight:600;}
+  /* Same shrink rule as the Binary Editor, so the two pane toolbars wrap at the same width */
+  @media (max-width:1180px){
+    .paneEntry{gap:4px; padding:6px 6px;}
+    .paneEntry button{padding:0 4px; font-size:11px;}
+  }
+
+  /* ===== Row grid ===== */
+  #rows{padding-bottom:12px;}          /* Leave room for the horizontal bar at the bottom so it never covers the last row */
+  #body .row{display:grid; grid-template-columns:26px 58px minmax(0,var(--aw,1fr)) 9px 26px 58px minmax(0,1fr);
+    content-visibility:auto; contain-intrinsic-size:auto 19px;}
+  /* Column 4 is the centre splitter: pane B's three cells must be placed explicitly on 5/6/7, otherwise they get squeezed into the 9px column */
+  #body .row .gut.a{grid-column:1;}
+  #body .row .ln.a{grid-column:2;}
+  #body .row .code.a{grid-column:3;}
+  #body .row .gut.b{grid-column:5;}
+  #body .row .ln.b{grid-column:6;}
+  #body .row .code.b{grid-column:7;}
+  .gut{position:relative; background:var(--off-bg); border-right:1px solid var(--line2);}
+  .gut.b{border-left:1px solid var(--split);}
+  .gut i{display:none; position:absolute; left:16px; right:4px; top:0; bottom:0; background:var(--gut);
+    border-radius:1.5px;}
+  /* The whole-file diff strip on the left edge of a pane: red marks = differences, grey frame = the part on screen */
+  .gutMap{position:absolute; left:0; width:14px; display:none; z-index:3; cursor:pointer; overflow:hidden;
+    background:var(--off-bg); border-right:1px solid var(--line2);}
+  .gutMap.show{display:block;}
+  .gutMap.none{display:none;}
+  .gutMap.b{border-left:1px solid var(--split);}
+  .gutMap .gmBars i{position:absolute; left:3px; right:3px; background:var(--gut); border-radius:1px;
+    pointer-events:none;}
+  .gutMap .gmView{position:absolute; left:0; right:0; display:none; pointer-events:none;
+    background:rgba(120,126,140,.30); border-top:1px solid rgba(110,118,135,.55);
+    border-bottom:1px solid rgba(110,118,135,.55);}
+  .gutMap .gmView.show{display:block;}
+  .gutMap:hover .gmBars i{box-shadow:0 0 0 1px var(--panel);}
+  .row.del .gut.a i, .row.mod .gut.a i, .row.ins .gut.b i, .row.mod .gut.b i{display:block;}
+  .ln{text-align:right; padding:0 6px; color:var(--muted); background:var(--head-bg);
+    border-right:1px solid var(--line2); user-select:none; overflow:hidden;}
+  .code{padding:0 8px; white-space:pre; overflow:hidden; text-overflow:ellipsis;}
+  /* The text is wrapped in .ctx: horizontal scrolling shifts that whole layer (each pane scrolls on its own) */
+  .code .ctx{display:inline-block; vertical-align:top;}
+  .code.a .ctx{transform:translateX(var(--hxA,0px));}
+  .code.b .ctx{transform:translateX(var(--hxB,0px));}
+  #body.wrap .code{white-space:pre-wrap; word-break:break-all; overflow:visible;}
+  #body.wrap .code .ctx{display:inline; transform:none;}
+  /* Inline editing: double-click (or Enter / F2) to edit the row in place */
+  .code.edit{background:var(--input-bg) !important; box-shadow:inset 0 0 0 1.5px var(--accent);}
+  .code.b.edit{box-shadow:inset 0 0 0 1.5px var(--curB);}
+  .code.edit .ctx{outline:none; caret-color:var(--accent); min-width:2px; cursor:text;}
+  .code.b.edit .ctx{caret-color:var(--curB);}
+  .row.del .code.a{background:var(--del-bg);}
+  .row.del .ln.a{background:var(--del-ln); color:var(--del-tx);}
+  .row.ins .code.b{background:var(--ins-bg);}
+  .row.ins .ln.b{background:var(--ins-ln); color:var(--ins-tx);}
+  .row.mod .code.a{background:var(--del-bg);}
+  .row.mod .code.b{background:var(--ins-bg);}
+  .row.mod .ln.a{background:var(--del-ln); color:var(--del-tx);}
+  .row.mod .ln.b{background:var(--ins-ln); color:var(--ins-tx);}
+  /* Filler for the side that has no line (added / deleted rows).
+     One hairline ruled through the middle of the row, on a faint tint. It is a single
+     1px line per cell with NO diagonal pattern and NO per-row offset, so:
+       - rows line up by construction (a horizontal rule cannot drift like a 45° hatch did,
+         which is what made the first striped attempt shimmer),
+       - nothing is per-cell computed: the old alignHatch() read offsetTop for every empty
+         cell on every render, which forced a layout of the whole 600+ row list each time.
+     A rule is also clearly not a glyph, unlike the dotted version that read as "·". */
+  .code.empty{background-color:var(--empty-fill);
+    background-image:linear-gradient(var(--empty-rule), var(--empty-rule));
+    background-size:100% 1px; background-repeat:no-repeat; background-position:0 50%;}
+  .code mark{background:var(--del-mark); color:inherit; border-radius:2px; padding:0;}
+  .code.b mark{background:var(--ins-mark);}
+  /* Selection: A blue, B purple, painted over the diff background */
+  .row.sela .ln.a, .row.sela .code.a{background:var(--sel-a);}
+  .row.selb .ln.b, .row.selb .code.b{background:var(--sel-b);}
+  .row.cur{box-shadow:inset 0 0 0 1px var(--accent); background:var(--cur);}
+  .row.first-diff .ln{border-top:1px solid var(--line2);}
+
+  /* Empty state: no card frame, just one line of text and a button in the middle */
+  #empty{position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    pointer-events:none; padding:20px; z-index:10;}
+  #empty .ecard{display:flex; flex-direction:column; align-items:center; gap:7px; text-align:center;
+    color:var(--muted); font-size:12.5px; font-family:"Segoe UI","Microsoft YaHei UI","Microsoft YaHei","PingFang SC","Hiragino Sans GB","Noto Sans CJK SC",sans-serif; max-width:min(420px,88%);}
+  #empty b{color:var(--text); font-size:13.5px; font-weight:600;}
+  #empty button{pointer-events:auto; margin-top:6px; height:28px; padding:0 12px;}
+  #empty.hide{display:none;}
+
+  /* ===== Diff list (bottom, draggable height) ===== */
+  #diffSplit{display:none; flex:none; height:9px; cursor:ns-resize; align-items:center; justify-content:center;
+    background:var(--group-bg); border-top:1px solid var(--line); position:relative; touch-action:none;}
+  #diffSplit.show{display:flex;}
+  #diffSplit::after{content:""; width:84px; height:4px; border-radius:2px; background:var(--grip);
+    box-shadow:0 0 0 1px rgba(0,0,0,.06); transition:background .12s, width .12s;}
+  #diffSplit:hover::after, #diffSplit.dragging::after{background:var(--split-hi); width:112px;}
+  #diffSplit.dragging{background:var(--row-alt);}
+  #diffPanel{display:none; flex-direction:column; flex:none; min-height:60px; max-height:60vh;
+    background:var(--panel); border-top:2px solid var(--split);}
+  #diffPanel.show{display:flex;}
+  /* List header: only the centred "Diffs A vs B" (file names moved down to the header row, centred over
+   the A / B columns), with the close button on the right. When collapsed it shows "A name -> B name"
+   so it is still clear which two files are compared. */
+  #diffPanel .dhead{padding:5px 10px; display:flex; align-items:center; justify-content:center;
+    gap:8px; flex:none; position:relative;
+    border-bottom:1px solid var(--line); background:var(--head-bg);}
+  #diffPanel .dhead b{color:var(--text);}
+  #diffPanel .dhead .sum{color:var(--muted); font-size:11.5px; font-family:Consolas,"Cascadia Mono","Courier New","Microsoft YaHei UI","Microsoft YaHei","PingFang SC","Hiragino Sans GB",monospace;}
+  #diffPanel .dhead button{height:23px; padding:0 8px; font-size:11.5px; flex:none;}
+  .dright{position:absolute; right:10px; top:50%; transform:translateY(-50%); display:flex; align-items:center; gap:6px;}
+  .dmid{flex:0 1 auto; min-width:0; display:flex; align-items:center; gap:8px;}
+  /* File-name summary, shown only while collapsed */
+  #dFoldInfo{display:none; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  #diffPanel.folded #dFoldInfo{display:inline;}
+  #dFoldInfo .fa{color:var(--del-tx);}
+  #dFoldInfo .fb{color:var(--ins-tx);}
+  /* The list viewport: a scrolling list on top, the A and B horizontal drag bars floating underneath */
+  #diffBody{flex:1 1 auto; min-height:0; position:relative; display:flex; flex-direction:column;}
+  #diffList{flex:1 1 auto; min-height:0; overflow-y:auto; overflow-x:hidden;
+    font-family:Consolas,"Cascadia Mono","Courier New","Microsoft YaHei UI","Microsoft YaHei","PingFang SC","Hiragino Sans GB",monospace; font-size:12.5px;}
+  /* Horizontal scrollbar inside a column: one under A, one under B, both draggable */
+  .drail{position:absolute; bottom:2px; height:9px; z-index:6; opacity:0; pointer-events:none; touch-action:none;}
+  .drail.on{opacity:1; pointer-events:auto;}
+  .drail .th{position:absolute; top:1px; bottom:1px; min-width:24px; border-radius:5px;
+    background:var(--thumb,rgba(120,130,150,.45));}
+  .drail:hover .th, .drail.drag .th{background:var(--thumb-hi,rgba(120,130,150,.78));}
+  #diffList::-webkit-scrollbar{width:12px;}
+  #diffList::-webkit-scrollbar-thumb{
+    background:var(--vscode-scrollbarSlider-background,rgba(120,130,150,.40));
+    border:3px solid transparent; background-clip:content-box; border-radius:10px;}
+  /* List columns: range / lines / A preview / B preview. The first three are pinned as narrow as possible,
+   the last two take exactly half each -- flex 1 1 0 with min-width:0 never gets pushed out by long lines,
+   so A and B of every row start at the same x. */
+  #diffPanel{--c-range:104px; --c-cnt:30px; --c-idx:30px;}
+  .dcols, .drow{display:flex; align-items:center; gap:8px; padding:0 8px; white-space:nowrap;}
+  .dcols{height:22px; flex:none; color:var(--muted); font-size:11px; letter-spacing:.3px;
+    background:var(--head-bg); border-bottom:1px solid var(--line); position:sticky; top:0; z-index:2;
+    font-family:"Segoe UI","Microsoft YaHei UI","Microsoft YaHei","PingFang SC","Hiragino Sans GB","Noto Sans CJK SC",sans-serif;}
+  .drow{min-height:22px; cursor:pointer; border-bottom:1px solid var(--line2); overflow:hidden;}
+  .drow:hover{background-color:var(--row-alt);}
+  .drow.cur{background-color:var(--accent-soft); box-shadow:inset 2px 0 0 var(--accent);}
+  /* Column separators: four thin vertical lines at # | range | lines | A | B, positioned by
+   placeColSeps() from the real column widths into --dx0/--dx1/--dx2/--dx3. Drawn as a background
+   layer (no layout impact, unaffected by row height) so it runs the full height of the row. */
+  .dcols, .drow{background-image:
+      linear-gradient(var(--line), var(--line)),
+      linear-gradient(var(--line), var(--line)),
+      linear-gradient(var(--line), var(--line)),
+      linear-gradient(var(--line), var(--line));
+    background-repeat:no-repeat;
+    background-size:1px 100%;
+    background-position:var(--dx0,-99px) 0, var(--dx1,-99px) 0, var(--dx2,-99px) 0, var(--dx3,-99px) 0;
+    background-origin:border-box;}
+  .rng{flex:0 0 var(--c-range); display:flex; align-items:center; gap:3px; color:var(--text);
+    font-weight:600; overflow:hidden;}
+  /* Half each: when line numbers grow a digit the whole column widens (fitRangeCol), so text is never clipped to "132~1" */
+  .rng .ra{flex:1 1 0; min-width:0; text-align:right; overflow:hidden; text-overflow:ellipsis;}
+  .rng .arw{flex:none; width:10px; text-align:center; color:var(--muted); font-weight:400;}
+  .rng .rb{flex:1 1 0; min-width:0; overflow:hidden; text-overflow:ellipsis;}
+  .rng .nul{color:var(--muted); font-weight:400;}
+  .cnt{flex:0 0 var(--c-cnt); text-align:center; color:var(--muted); font-variant-numeric:tabular-nums;}
+  /* Row number in front of the range, so the ◀ / ▶ position can be read off the list */
+  .idx{flex:0 0 var(--c-idx); text-align:center; color:var(--muted); font-weight:400;
+    font-variant-numeric:tabular-nums; opacity:.8;}
+  .drow.cur .idx{color:var(--accent); opacity:1; font-weight:600;}
+  .pv{flex:1 1 0; min-width:0; display:flex; align-items:center; gap:6px; height:18px;
+    padding:0 6px; border-radius:4px; overflow:hidden;}
+  /* A / B widths split by --ga : --gb (1:1 by default); dragging the centre separator changes those ratios */
+  .pv.a{background:var(--del-bg); color:var(--del-tx); flex-grow:var(--ga,1);}
+  .pv.b{background:var(--ins-bg); color:var(--ins-tx); flex-grow:var(--gb,1);}
+  .pv .tx{flex:1 1 0; min-width:0; overflow:hidden;}
+  /* The inner layer shifts as a whole: every row of the column moves together (the drag bar is under the column, see .drail) */
+  .pv .txin{display:inline-block; white-space:pre; vertical-align:top;}
+  .pv.a .txin{transform:translateX(calc(-1 * var(--oxa,0px)));}
+  .pv.b .txin{transform:translateX(calc(-1 * var(--oxb,0px)));}
+  .dcols .h-range{flex:0 0 var(--c-range); text-align:center;}
+  .dcols .h-cnt{flex:0 0 var(--c-cnt); text-align:center;}
+  .dcols .h-idx{flex:0 0 var(--c-idx); text-align:center;}
+  /* The A / B column headers are the file names, centred right above their own columns */
+  .dcols .h-pv{flex:1 1 0; min-width:0; display:flex; align-items:center; justify-content:center; gap:5px;}
+  .dcols .h-pv .hn{min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .dcols .h-pv.a{color:var(--del-tx); flex-grow:var(--ga,1);}
+  .dcols .h-pv.b{color:var(--ins-tx); flex-grow:var(--gb,1);}
+  /* All four separators drag left / right (placeColSeps writes left, matching the four thin lines):
+   0 = # | range -> row-number width; 1 = range | lines -> range width; 2 = lines | A -> lines width;
+   3 = A | B -> the A/B split */
+  .cgrip{position:absolute; top:0; bottom:0; width:11px; margin-left:-5px; z-index:4;
+    cursor:col-resize; display:none; touch-action:none;}
+  .cgrip.show{display:block;}
+  .cgrip::after{content:""; position:absolute; left:5px; top:0; bottom:0; width:1px;
+    background:transparent; transition:background .12s, width .12s;}
+  .cgrip:hover::after, .cgrip.on::after{background:var(--accent); width:2px; left:4px;}
+  /* One-click collapse: title bar only; click again to expand back to the previous height */
+  #diffPanel.folded{height:auto !important; min-height:0; max-height:none;}
+  #diffPanel.folded #diffBody{display:none;}
+
+  /* ===== Status bar (same as the Binary Editor: A!=B chip + pane / caret / selection / mode) ===== */
+  /* Font size, padding, gap and background all match the Binary Editor status bar, so both tools read as one product */
+  #status{flex:none; display:flex; align-items:center; gap:18px; padding:6px 14px; overflow:hidden;
+    background:var(--panel); border-top:1px solid var(--line);
+    font-family:Consolas,"Cascadia Mono","Courier New","Microsoft YaHei UI","Microsoft YaHei","PingFang SC","Hiragino Sans GB",monospace;
+    font-size:12px; color:var(--muted);}
+  #status > span{white-space:nowrap; flex:0 0 auto;}
+  #status .dot{font-style:normal; color:var(--muted); margin:0 5px;}
+  #status b{color:var(--text); font-weight:600;}
+  #status .k{color:var(--text);}
+  #status .d{color:var(--del-tx);}
+  #status .i{color:var(--ins-tx);}
+  /* The hint takes the slack in the middle and ellipsises as the window narrows -- the stats on the right never get pushed out */
+  #status .hint{flex:1 1 auto; min-width:0; color:var(--muted); opacity:.85;
+    overflow:hidden; text-overflow:ellipsis;}
+  #status .spacer{flex:0 1 auto; min-width:10px;}
+  /* A = B / A != B chip: looks exactly like relchip in the Binary Editor */
+  #status .relchip{font-weight:700; border-radius:4px; padding:1px 8px; font-size:11.5px;}
+  #status .relchip.same{color:var(--same-fg); background:var(--same-bg); border:1px solid var(--same-line);}
+  #status .relchip.diff{color:var(--diff2-fg); background:var(--diff2-bg); border:1px solid var(--diff2-line);}
+  /* The narrower the window, the less important items drop out first (better one item fewer than half a word) */
+  @media (max-width: 1180px){ #status .hint{display:none;} #status .spacer{flex:1 1 auto;} }
+  @media (max-width: 980px){ #status .st-meta{display:none;} }
+  @media (max-width: 840px){ #status .st-sel{display:none;} }
+
+  /* ===== Drop overlay ===== */
+  #dropHint{position:absolute; inset:0; display:none; align-items:center; justify-content:center;
+    background:rgba(37,99,235,.06); z-index:20; pointer-events:none;}
+  #dropHint.show{display:flex;}
+  #dropHint .dh-card{border:2px dashed var(--accent); border-radius:12px; background:var(--panel);
+    padding:22px 30px; text-align:center; color:var(--text); font-size:13px; line-height:1.6;
+    box-shadow:0 8px 24px rgba(0,0,0,.12);}
+  #dropHint .dh-badge{display:inline-block; font:700 10.5px/1 Consolas,"Cascadia Mono","Courier New","Microsoft YaHei UI","Microsoft YaHei","PingFang SC","Hiragino Sans GB",monospace; color:#fff;
+    background:var(--accent); border-radius:4px; padding:3px 6px; margin:0 2px;}
+  #dropHint .dh-row1{font-weight:600;}
+  #dropHint .dh-row2{margin-top:6px; font-size:11.5px; color:var(--muted);}
+  #dropHint kbd{font:11px/1.4 Consolas,"Cascadia Mono","Courier New","Microsoft YaHei UI","Microsoft YaHei","PingFang SC","Hiragino Sans GB",monospace; padding:1px 5px; border-radius:4px;
+    border:1px solid var(--line); background:var(--bg); color:var(--text);}
+
+  /* ===== Context menu ===== */
+  .ctxMenu{position:fixed; left:0; top:0; z-index:90; display:none; min-width:206px; padding:5px;
+    background:var(--panel); border:1px solid var(--line); border-radius:9px;
+    box-shadow:0 10px 30px rgba(15,23,42,.22), 0 2px 6px rgba(15,23,42,.08);}
+  .ctxMenu.show{display:block;}
+  .ctxMenu .ctxHead{display:flex; align-items:center; gap:6px; padding:3px 8px 6px; font-size:11px; color:var(--muted);}
+  .ctxMenu .ctxHead .b{background:var(--curA); color:#fff; border-radius:4px; padding:1px 6px;
+    font-weight:700; letter-spacing:.3px;}
+  .ctxMenu .ctxHead.parB .b{background:var(--curB);}
+  .ctxMenu button{display:flex; align-items:center; gap:9px; width:100%; height:29px; padding:0 10px;
+    border:1px solid transparent; background:transparent; border-radius:6px; font-size:12.5px;
+    color:var(--text); text-align:left; cursor:pointer; white-space:nowrap;}
+  .ctxMenu button:hover:not(:disabled){background:var(--accent-soft); color:var(--accent); border-color:var(--soft-line-a);}
+  .ctxMenu button.danger:hover:not(:disabled){background:var(--danger-bg); color:var(--danger); border-color:rgba(220,38,38,.45);}
+  .ctxMenu button:disabled{opacity:.35; cursor:default;}
+  .ctxMenu .sep{display:block; height:1px; margin:4px 6px; background:var(--line2);}
+
+  /* ===== About ===== */
+  #veil{position:fixed; inset:0; background:rgba(15,20,30,.42); display:none; align-items:center;
+    justify-content:center; z-index:40;}
+  #veil.show{display:flex;}
+  .dlg{background:var(--panel); border:1px solid var(--line); border-radius:12px;
+    box-shadow:0 18px 48px rgba(0,0,0,.28); width:min(600px,92vw); padding:18px 20px;}
+  .dlg h3{display:flex; align-items:center; gap:8px; margin:0; font-size:17px;}
+  .dlg h3 .vtag{font-size:11px; font-weight:600; color:#fff; background:var(--accent);
+    border-radius:4px; padding:1px 7px;}
+  .ab-date{margin-left:auto; font:600 11.5px/1 Consolas,"Cascadia Mono","Courier New","Microsoft YaHei UI","Microsoft YaHei","PingFang SC","Hiragino Sans GB",monospace; color:var(--accent);
+    background:var(--accent-soft); border:1px solid var(--soft-line-a); border-radius:6px; padding:5px 9px;}
+  .ab-blurb{font-size:12.5px; color:var(--muted); line-height:1.6; margin:8px 0 15px;}
+  .ab-grid{display:grid; grid-template-columns:1fr 1fr; gap:13px 16px;}
+  .ab-item{border-left:3px solid var(--soft-line-a); padding-left:10px;}
+  .ab-item .t{font-size:12.5px; font-weight:700;}
+  .ab-item .d{font-size:11.5px; color:var(--muted); line-height:1.55; margin-top:3px;}
+  .ab-foot{margin-top:16px; padding-top:11px; border-top:1px solid var(--line2);
+    font-size:12px; color:var(--muted); display:flex; gap:8px;}
+  .ab-foot b{color:var(--text);}
+  .btns{display:flex; justify-content:flex-end; gap:8px; margin-top:14px;}
+
+  /* ===== Import dialog: two columns, A / B independent (same as the Binary Editor) ===== */
+  .mask{position:fixed; inset:0; background:rgba(15,20,35,.45); display:none; align-items:center;
+    justify-content:center; z-index:60;}
+  .mask.show{display:flex;}
+  .dlg.wide{width:min(1000px,96vw); max-height:92vh; overflow:auto;}
+  .dlg > p{margin:4px 0 10px; color:var(--muted); font-size:12.5px; line-height:1.6;}
+  .dlg > p b{color:var(--text);}
+  .impGrid{display:flex; gap:14px; align-items:stretch;}
+  .impCol{flex:1 1 0; min-width:0; display:flex; flex-direction:column; gap:6px;
+    border:1.5px solid var(--soft-line-a); border-radius:10px; padding:10px; background:var(--soft-a);}
+  .impCol.b{border-color:var(--soft-line-b); background:var(--soft-b);}
+  .impCol.over{border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft);}
+  .impCol.b.over{border-color:var(--curB);}
+  .impCol .ch{display:flex; align-items:center; gap:8px; font-weight:700; font-size:12.5px;}
+  .impCol .ch .bdg{color:#fff; background:var(--accent); border-radius:4px; padding:1px 7px; font-size:11px;}
+  .impCol.b .ch .bdg{background:var(--curB);}
+  .impCol .ch .len{color:var(--muted); font:11px Consolas,"Cascadia Mono","Courier New","Microsoft YaHei UI","Microsoft YaHei","PingFang SC","Hiragino Sans GB",monospace; font-weight:400;}
+  .impCol textarea{
+    width:100%; height:132px; font:12px Consolas,"Cascadia Mono","Courier New","Microsoft YaHei UI","Microsoft YaHei","PingFang SC","Hiragino Sans GB",monospace; color:var(--text);
+    border:1px solid var(--line); border-radius:8px; padding:8px; resize:vertical;
+    background:var(--input-bg); line-height:1.5; tab-size:4;
+  }
+  .impCol textarea:focus{outline:none; border-color:var(--accent);}
+  .impCol textarea::placeholder{color:var(--muted); opacity:.9;}
+  .impCol.b textarea:focus{border-color:var(--curB);}
+  .impCol .row{display:flex; gap:6px;}
+  .impCol .row button{flex:1 1 0; min-width:0; height:26px; font-size:12px; padding:0 6px;
+    justify-content:center;}
+  .impTag{display:none; margin-top:1px; font-size:11.5px; color:var(--accent); cursor:pointer;
+    background:var(--accent-soft); border:1px solid var(--soft-line-a); border-radius:5px; padding:3px 7px;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .impTag.show{display:block;}
+  .impCol.b .impTag{color:var(--curB); border-color:var(--soft-line-b);}
+  .impErr{min-height:16px; font-size:11.5px; color:var(--danger); font-weight:600;}
+  .impFoot{display:flex; align-items:center; gap:8px; margin-top:12px;}
+  .impFoot .hint{font-size:11.5px; color:var(--muted);}
+  .impFoot .grow{flex:1;}
+
+  /* ===== Toast at the top (same as the Binary Editor) ===== */
+  #toastWrap{position:fixed; top:12px; left:50%; transform:translateX(-50%); z-index:80;
+    display:flex; flex-direction:column; gap:8px; align-items:center; pointer-events:none; max-width:92vw;}
+  .toast{display:flex; align-items:center; gap:8px; background:#0f172a; color:#fff; border-radius:8px;
+    padding:8px 16px 8px 12px; font-size:13px;
+    line-height:1.5; box-shadow:0 8px 26px rgba(0,0,0,.28); max-width:min(92vw,560px); animation:toastIn .16s ease-out;}
+  /* A round icon on the left: check = success, exclamation = error, i = info (identical to the Binary Editor toast) */
+  .toast .ic{flex:0 0 auto; width:17px; height:17px; border-radius:50%; background:rgba(255,255,255,.22);
+    display:flex; align-items:center; justify-content:center; font:700 11.5px/1 "Segoe UI",Arial,sans-serif;}
+  .toast .tx{min-width:0;}
+  .toast.ok{background:#1d4ed8;}
+  .toast.err{background:#dc2626;}
+  @keyframes toastIn{from{opacity:0; transform:translateY(-8px);} to{opacity:1; transform:none;}}
+</style>
+</head>
+<body>
+
+<div id="titlebar">
+  <span class="brand">⬡ Text Comparer</span>
+  <button id="btnAbout" data-i18n-title="aboutTip" data-i18n="aboutBtn"></button>
+  <span class="ver">__BB_VER__</span>
+  <span class="spacer"></span>
+  <span id="pill" data-i18n="pillEmpty"></span>
+  <button id="btnLang" title="Switch language / 切换界面语言">EN</button>
+</div>
+
+<div id="toolbar">
+  <div class="group"><span class="cap" data-i18n="capImport"></span>
+    <button id="btnImport" data-i18n-title="importTip"><span class="ci">📥</span><span data-i18n="btnImport"></span></button>
+  </div>
+
+  <div class="group"><span class="cap" data-i18n="capCompare"></span>
+    <button id="btnCompare" class="primary" data-i18n-title="compareTip" data-i18n="btnCompare"></button>
+    <button id="btnPrev" data-i18n-title="prevTip">◀</button>
+    <span id="navPos">— / —</span>
+    <button id="btnNext" data-i18n-title="nextTip">▶</button>
+    <button id="btnSwap" data-i18n-title="swapTip">⇄</button>
+    <button id="btnList" data-i18n-title="listTip" data-i18n="btnList"></button>
+  </div>
+
+  <div class="group"><span class="cap" data-i18n="capEdit"></span>
+    <button id="btnUndo" data-i18n-title="undoTip" data-i18n="btnUndo"></button>
+    <button id="btnRedo" data-i18n-title="redoTip" data-i18n="btnRedo"></button>
+  </div>
+
+  <div class="group"><span class="cap" data-i18n="capOptions"></span>
+    <label class="chk"><input type="checkbox" id="optWs" data-i18n-title="wsTip"><span data-i18n="optWs"></span></label>
+    <label class="chk"><input type="checkbox" id="optCase"><span data-i18n="optCase"></span></label>
+    <label class="chk"><input type="checkbox" id="optBlank"><span data-i18n="optBlank"></span></label>
+    <label class="chk"><input type="checkbox" id="optWrap"><span data-i18n="optWrap"></span></label>
+  </div>
+
+  <div class="group"><span class="cap" data-i18n="capOutput"></span>
+    <button id="btnCopy" data-i18n-title="copyTip" data-i18n="btnCopy"></button>
+    <button id="btnSave" data-i18n-title="saveTip" data-i18n="btnSave"></button>
+  </div>
+</div>
+
+<div id="stage">
+<div id="body">
+  <div id="sticky">
+    <div id="paneHeads">
+      <div class="paneHead" id="headA">
+        <span class="tag">A</span>
+        <span class="side" data-i18n="paneLeft"></span>
+        <span class="act" data-i18n="editing"></span>
+        <span class="dot">·</span>
+        <span class="phead" id="nameA"></span>
+        <span class="sig" id="metaA"></span>
+      </div>
+      <div class="paneHead" id="headB">
+        <span class="tag">B</span>
+        <span class="side" data-i18n="paneRight"></span>
+        <span class="act" data-i18n="editing"></span>
+        <span class="dot">·</span>
+        <span class="phead" id="nameB"></span>
+        <span class="sig" id="metaB"></span>
+      </div>
+    </div>
+
+    <div id="paneEntries">
+      <div class="paneEntry" id="entryA">
+        <button id="openA" class="w" data-i18n-title="tipOpen"><span class="ci">📂</span><span data-i18n="eOpen"></span></button>
+        <button id="saveA" data-i18n-title="tipSave"><span class="ci">💾</span><span data-i18n="eSave"></span></button>
+        <button id="saveAsA" data-i18n-title="tipSaveAs"><span class="ci">📤</span><span data-i18n="eSaveAs"></span></button>
+        <button id="clearA" data-i18n-title="tipClear"><span class="ci">🧹</span><span data-i18n="eClear"></span></button>
+        <span class="sep"></span>
+        <button id="cutA" data-i18n-title="tipCut"><span class="ci">✂</span><span data-i18n="eCut"></span></button>
+        <button id="copyA" data-i18n-title="tipCopy"><span class="ci">📋</span><span data-i18n="eCopy"></span></button>
+        <button id="pasteA" data-i18n-title="tipPaste"><span class="ci">📥</span><span data-i18n="ePaste"></span></button>
+        <button id="delA" data-i18n-title="tipDelete"><span class="ci">🗑</span><span data-i18n="eDelete"></span></button>
+      </div>
+      <div class="paneEntry" id="entryB">
+        <button id="openB" class="w" data-i18n-title="tipOpen"><span class="ci">📂</span><span data-i18n="eOpen"></span></button>
+        <button id="saveB" data-i18n-title="tipSave"><span class="ci">💾</span><span data-i18n="eSave"></span></button>
+        <button id="saveAsB" data-i18n-title="tipSaveAs"><span class="ci">📤</span><span data-i18n="eSaveAs"></span></button>
+        <button id="clearB" data-i18n-title="tipClear"><span class="ci">🧹</span><span data-i18n="eClear"></span></button>
+        <span class="sep"></span>
+        <button id="cutB" data-i18n-title="tipCut"><span class="ci">✂</span><span data-i18n="eCut"></span></button>
+        <button id="copyB" data-i18n-title="tipCopy"><span class="ci">📋</span><span data-i18n="eCopy"></span></button>
+        <button id="pasteB" data-i18n-title="tipPaste"><span class="ci">📥</span><span data-i18n="ePaste"></span></button>
+        <button id="delB" data-i18n-title="tipDelete"><span class="ci">🗑</span><span data-i18n="eDelete"></span></button>
+      </div>
+    </div>
+  </div>
+
+  <div id="rows"></div>
+  <div id="empty">
+    <div class="ecard">
+      <b data-i18n="emptyTitle"></b><span data-i18n="emptyHint"></span>
+      <button id="btnImportEmpty" class="primary" data-i18n="btnImport"></button>
+    </div>
+  </div>
+  </div>
+
+  <div class="gutMap" id="gutMapA" data-i18n-title="gutTip">
+    <div class="gmBars" id="gmBarsA"></div><div class="gmView" id="gmViewA"></div>
+  </div>
+  <div class="gutMap b" id="gutMapB" data-i18n-title="gutTip">
+    <div class="gmBars" id="gmBarsB"></div><div class="gmView" id="gmViewB"></div>
+  </div>
+
+  <div class="paneFrame" id="frameA"></div>
+  <div class="paneFrame b" id="frameB"></div>
+  <!-- Per-pane scrollbars: vertical on the right edge, horizontal at the bottom, all four present -->
+  <div class="rail v" id="railVA"><div class="th" id="thVA"></div></div>
+  <div class="rail v b" id="railVB"><div class="th" id="thVB"></div></div>
+  <div class="rail h" id="railHA"><div class="th" id="thHA"></div></div>
+  <div class="rail h b" id="railHB"><div class="th" id="thHB"></div></div>
+  <div id="paneSplit" data-i18n-title="paneSplitTip" tabindex="0" role="separator" aria-orientation="vertical"></div>
+</div>
+
+<div id="diffSplit" data-i18n-title="splitTip"></div>
+<div id="diffPanel">
+  <div class="dhead">
+    <span class="dmid">
+      <b data-i18n="diffTitle"></b>
+      <span class="sum" id="dFoldInfo"></span>
+      <span class="sum" id="diffSummary"></span>
+    </span>
+    <span class="dright">
+      <button id="btnDiffClose" data-i18n="diffClose"></button>
+    </span>
+  </div>
+  <div id="diffBody">
+    <div id="diffList"></div>
+    <span class="cgrip" id="grip0" data-sep="0"></span>
+    <span class="cgrip" id="grip1" data-sep="1"></span>
+    <span class="cgrip" id="grip2" data-sep="2"></span>
+    <span class="cgrip" id="grip3" data-sep="3"></span>
+    <div class="drail" id="dRailA"><div class="th" id="dThA"></div></div>
+    <div class="drail" id="dRailB"><div class="th" id="dThB"></div></div>
+  </div>
+</div>
+
+<div id="status">
+  <span id="stRel"></span>
+  <span class="st-act"><span data-i18n="stActive"></span> <b id="stAct">A</b></span>
+  <span class="st-pos"><span data-i18n="stDiffPos"></span> <b id="stPos">—</b></span>
+  <span class="st-cur"><span data-i18n="stCursor"></span> <b id="stCur">—</b></span>
+  <span class="st-meta"><span data-i18n="stByte"></span> <b id="stA">A: —</b><i class="dot">·</i><b id="stB">B: —</b></span>
+  <span class="st-sel"><span data-i18n="stSel"></span> <b id="stSel">—</b></span>
+  <span class="st-mode"><span data-i18n="stMode"></span> <b id="stMode"></b></span>
+  <span id="stHint" class="hint"></span>
+</div>
+
+<div id="dropHint"><div class="dh-card" data-i18n-html="dropHint"></div></div>
+
+<!-- Row context menu: same as the Binary Editor -->
+<div id="ctxMenu" class="ctxMenu">
+  <div class="ctxHead"><span class="b" id="ctxPaneTag">A</span><span id="ctxInfo"></span></div>
+  <button id="ctxCut"><span class="ci">✂</span><span data-i18n="ctxCut"></span></button>
+  <button id="ctxCopy"><span class="ci">📋</span><span data-i18n="ctxCopy"></span></button>
+  <button id="ctxPaste"><span class="ci">📥</span><span data-i18n="ctxPaste"></span></button>
+  <span class="sep"></span>
+  <button id="ctxToOther"><span class="ci" id="ctxToOtherIc">➡</span><span id="ctxToOtherLbl"></span></button>
+  <button id="ctxMoveToOther"><span class="ci">✂</span><span id="ctxMoveToOtherLbl"></span></button>
+  <span class="sep"></span>
+  <button id="ctxDelete" class="danger"><span class="ci">🗑</span><span data-i18n="ctxDel"></span></button>
+</div>
+
+<div id="veil">
+  <div class="dlg">
+    <h3><span>Text Comparer</span><span class="vtag">__BB_VER__</span><span class="ab-date" id="abDate"></span></h3>
+    <div class="ab-blurb" data-i18n="aboutBlurb"></div>
+    <div class="ab-grid" id="aboutGrid"></div>
+    <div class="ab-foot"><b data-i18n="aboutAuthor"></b><span data-i18n="aboutAuthorName"></span></div>
+    <div class="btns"><button id="btnAboutClose" class="primary" data-i18n="close"></button></div>
+  </div>
+</div>
+
+<!-- Import dialog: two columns, A / B filled independently; an empty box leaves that pane alone -->
+<div class="mask" id="impMask">
+  <div class="dlg wide">
+    <h3><span data-i18n="impTitle"></span></h3>
+    <p data-i18n-html="impDesc"></p>
+    <div class="impGrid">
+      <div class="impCol a" id="impColA">
+        <div class="ch"><span class="bdg">A</span><span data-i18n="impColA"></span><span class="len" id="impLenA"></span></div>
+        <textarea id="impTextA" spellcheck="false" data-i18n-ph="impPhA"></textarea>
+        <div class="row">
+          <button id="impPickA"><span class="ci">📂</span><span data-i18n="pickFileBtn"></span></button>
+          <button id="impClipA"><span class="ci">📋</span><span data-i18n="fromClipBtn"></span></button>
+        </div>
+        <span class="impTag" id="impTagA"></span>
+        <div class="impErr" id="impErrA"></div>
+        <button id="impApplyA" class="primary" data-i18n="impApplyA"></button>
+      </div>
+      <div class="impCol b" id="impColB">
+        <div class="ch"><span class="bdg">B</span><span data-i18n="impColB"></span><span class="len" id="impLenB"></span></div>
+        <textarea id="impTextB" spellcheck="false" data-i18n-ph="impPhB"></textarea>
+        <div class="row">
+          <button id="impPickB"><span class="ci">📂</span><span data-i18n="pickFileBtn"></span></button>
+          <button id="impClipB"><span class="ci">📋</span><span data-i18n="fromClipBtn"></span></button>
+        </div>
+        <span class="impTag" id="impTagB"></span>
+        <div class="impErr" id="impErrB"></div>
+        <button id="impApplyB" class="primary" data-i18n="impApplyB"></button>
+      </div>
+    </div>
+    <div class="impFoot">
+      <span class="hint" data-i18n="impBothHint"></span>
+      <span class="grow"></span>
+      <button id="impBoth" class="primary" data-i18n="impBoth"></button>
+      <button id="impClose" data-i18n="cancel"></button>
+    </div>
+  </div>
+</div>
+
+<div id="toastWrap"></div>
+
+<script>
+(function(){
+  'use strict';
+
+  var vscode = acquireVsCodeApi();
+  var saved = vscode.getState() || {};
+
+  var I18N = {
+    en: {
+      aboutBtn:'About', aboutTip:'About Text Comparer', close:'Close',
+      capCompare:'Compare', capEdit:'Edit', capOptions:'Options', capOutput:'Output',
+      capImport:'Import', btnImport:'Import data…',
+      importTip:'Load a local file, paste text, or drop a file — pane A and pane B are filled independently',
+      btnCompare:'Compare', compareTip:'Compare A and B again (options are applied every time)',
+      prevTip:'Previous difference', nextTip:'Next difference', swapTip:'Swap A and B',
+      btnList:'Diff list', listTip:'Show / hide the difference list',
+      foldTip:'Fold the list down to its title bar', unfoldTip:'Expand the list again',
+      colIdxTip:'Drag to widen / narrow the row-number column · double click to reset',
+      colGripTip:'Drag to widen / narrow the line-range column · double click for automatic width',
+      colCntTip:'Drag to widen / narrow the count column · double click to reset',
+      colSplitTip:'Drag to change the A / B split · double click for 50 / 50',
+      btnUndo:'Undo', btnRedo:'Redo', undoTip:'Undo the last edit', redoTip:'Redo the edit you just undid',
+      optWs:'Ignore whitespace', wsTip:'Collapse runs of spaces/tabs and ignore leading/trailing spaces',
+      optCase:'Ignore case', optBlank:'Ignore blank lines', optWrap:'Wrap',
+      btnCopy:'Copy diff', copyTip:'Copy a unified diff of every change to the clipboard',
+      btnSave:'Save diff…', saveTip:'Write the unified diff to a file',
+      paneLeft:'Left', paneRight:'Right', editing:'Editing',
+      eOpen:'Open', eSave:'Save', eSaveAs:'Save As', eClear:'Clear',
+      eCut:'Cut', eCopy:'Copy', ePaste:'Paste', eDelete:'Delete',
+      tipOpen:'Open a text file into this side', tipSave:'Save this side back to its file',
+      tipSaveAs:'Save this side as a new file', tipClear:'Clear this side',
+      tipCut:'Cut the selected lines', tipCopy:'Copy the selected lines',
+      tipPaste:'Paste the clipboard over the selected lines', tipDelete:'Delete the selected lines',
+      diffTitle:'Diffs', diffClose:'✕ Close list', splitTip:'Drag to resize the list, double click to reset',
+      colRange:'Line range', colLines:'Lines',
+      stActive:'Active:', stCursor:'Cursor:', stSel:'Sel:', stMode:'Mode:', stDiffPos:'Diff:', stByte:'Byte:',
+      stModeEdit:'Editing', stModeView:'Browse',
+      stLn:'line {n}', stLnRange:'lines {a}–{b} ({n})', stLn1:'line {a} (1)',
+      stHint:'Double-click a line to edit it · Ctrl+S saves back to the file',
+      gutTip:'Diff minimap: the whole file in one strip — red bars are the differences, click one to jump there',
+      paneSplitTip:'Drag left/right to resize the A / B panes, double click to split evenly',
+      msgSplitEven:'Panes split evenly (50 / 50)',
+      diffSum:'{n} diff region(s)', diffCap:'showing first {n}', diffSame:'no differences',
+      diffNone:'nothing to compare',
+      ctxCopy:'Copy', ctxCut:'Cut', ctxPaste:'Paste', ctxDel:'Delete',
+      ctxInfoSel:'{side} · {n} lines selected', ctxInfoSel1:'{side} · {n} line selected',
+      ctxInfoRow:'{side} · line {n}', ctxInfoNone:'{side} · no selection',
+      copyToRight:'Copy to right pane (B)', copyToLeft:'Copy to left pane (A)',
+      moveToRight:'Cut to right pane (B)', moveToLeft:'Cut to left pane (A)',
+      pillEmpty:'No files', pillOneSide:'One side only', noFile:'Not loaded', pillSame:'No differences', pillDiff:'{n} differences',
+      emptyTitle:'Nothing to compare yet',
+      emptyHint:'Load or paste two text files (or drag them in) — A and B appear side by side.',
+      dropHint:'<div class="dh-row1">Drop 2 files → <span class="dh-badge">A</span> + <span class="dh-badge">B</span></div><div class="dh-row2">One file goes to the empty pane · hold <kbd>Alt</kbd> for <span class="dh-badge">B</span></div>',
+      aboutBlurb:'Line-by-line text comparison.',
+      aboutT1:'Real diff', aboutD1:'patience + LCS, so changed lines stay aligned.',
+      aboutT2:'Character level', aboutD2:'Only the characters that changed are marked.',
+      aboutT3:'Edit in place', aboutD3:'Double-click a line to edit it, then save it back to the file.',
+      aboutT4:'Unified diff', aboutD4:'Copy or save a standard patch (--- / +++ / @@).',
+      aboutAuthor:'Author', aboutAuthorName:'Suyu Diao, Firmware Engineer In LCFC',
+      stLines:'{n} lines', stLine:'{n} line', stMeta:'{n} lines · {size}', stMeta1:'{n} line · {size}',
+      sumSame:'identical', sumChanged:'{add} added · {del} removed · {mod} modified',
+      msgFound:'{n} diff region(s) found, highlighted in both panes, jumped to first',
+      msgAllSame:'Both panes are identical — no differences',
+      msgCopied:'Unified diff copied', msgCopiedSel:'Copied {n} line(s)',
+      msgCut:'Cut {n} line(s)', msgPasted:'Pasted {n} line(s)', msgDeleted:'Deleted {n} line(s)',
+      msgNoSel:'Select some lines in A or B first',
+      msgUndo:'Undone', msgRedo:'Redone', msgNoUndo:'Nothing to undo', msgNoRedo:'Nothing to redo',
+      msgSaved:'Saved: {p}', msgSavedPane:'Saved to source: {p}', msgSaveFail:'Save failed: {e}',
+      msgNoSrc:'No source file for this side yet — use Save as… to write it to a new location',
+      msgNoDiff:'No differences to export', msgClipEmpty:'Clipboard is empty', msgEmpty:'This side is empty',
+      msgBig:'Comparing {n} lines — highlighting may be slow', msgReadFail:'Could not read the file: {e}',
+      needBoth:'Load both sides first',
+
+      /* Import dialog */
+      impTitle:'Import data',
+      impDesc:'The two boxes map to <b>pane A</b> and <b>pane B</b>. Fill each independently — they never affect each other. Type or paste text, drop a file straight onto a box, or pick one with <b>File…</b>. <b>A box left empty is not touched.</b>',
+      impColA:'Pane A · main buffer', impColB:'Pane B · compare buffer',
+      impPhA:'Paste text, or drop a file here…',
+      impPhB:'Paste text, or drop a file here…',
+      pickFileBtn:'File…', fromClipBtn:'Clipboard',
+      impApplyA:'Import A only', impApplyB:'Import B only', impBoth:'Import both',
+      impBothHint:'Empty boxes stay untouched', cancel:'Cancel',
+      impFileTag:'{n} · {b} (click to clear)', msgFilePicked:'{n} placed in box {p}',
+      msgImpNone:'Both boxes are empty — nothing imported',
+      msgImpOne:'Imported into {p}: {n} lines', msgImpSum:'Imported — A: {a} lines, B: {b} lines',
+      msgClipIn:'Clipboard pasted into box {p}', msgDropBox:'Dropped {n} into box {p}',
+      msgDropFiles:'Dropped {n} file(s)', msgDropNone:'Could not read what was dropped ({t}) — drag a file from the Explorer, or use Import data…',
+      msgEmptyBox:'This box is empty — type, paste, drop a file, or use File…',
+      msgBoxFull:'Box {p} already has content — clear it first'
+    },
+    zh: {
+      aboutBtn:'关于', aboutTip:'关于 Text Comparer', close:'关闭',
+      capCompare:'比较', capEdit:'编辑', capOptions:'选项', capOutput:'输出',
+      capImport:'导入', btnImport:'导入数据…',
+      importTip:'读本地文件、粘贴文本、或直接拖文件进来 —— A 栏和 B 栏各填各的',
+      btnCompare:'重新比较', compareTip:'重新比较 A 和 B（每次都会应用下面的选项）',
+      prevTip:'上一处差异', nextTip:'下一处差异', swapTip:'交换 A / B',
+      btnList:'差异清单', listTip:'显示 / 隐藏底部的差异清单',
+      foldTip:'把清单折叠成一条标题栏', unfoldTip:'把清单展开回原样',
+      colIdxTip:'左右拖动调整「序号」列宽 · 双击恢复默认',
+      colGripTip:'左右拖动调整「行号范围」列宽 · 双击恢复自动宽度',
+      colCntTip:'左右拖动调整「行数」列宽 · 双击恢复默认',
+      colSplitTip:'左右拖动调整 A / B 两列的宽度 · 双击恢复各一半',
+      btnUndo:'撤销', btnRedo:'重做', undoTip:'撤销上一步编辑', redoTip:'重做刚撤销的编辑',
+      optWs:'忽略空白', wsTip:'把连续的空格/制表符合成一个，并忽略行首行尾空白',
+      optCase:'忽略大小写', optBlank:'忽略空行', optWrap:'自动换行',
+      btnCopy:'复制差异', copyTip:'把统一格式（unified diff）的差异复制到剪贴板',
+      btnSave:'保存差异…', saveTip:'把统一格式的差异存成文件',
+      paneLeft:'左栏', paneRight:'右栏', editing:'修改中',
+      eOpen:'打开', eSave:'保存', eSaveAs:'另存为', eClear:'清空',
+      eCut:'剪切', eCopy:'复制', ePaste:'粘贴', eDelete:'删除',
+      tipOpen:'把文本文件打开到这一栏', tipSave:'把这一栏存回原文件',
+      tipSaveAs:'把这一栏另存为新文件', tipClear:'清空这一栏',
+      tipCut:'剪切选中的行', tipCopy:'复制选中的行',
+      tipPaste:'用剪贴板内容覆盖选中的行', tipDelete:'删除选中的行',
+      diffTitle:'差异清单', diffClose:'✕ 关闭清单', splitTip:'上下拖动调整高度，双击恢复默认',
+      colRange:'行号范围', colLines:'行数',
+      stActive:'编辑栏:', stCursor:'光标:', stSel:'选区:', stMode:'模式:', stDiffPos:'差异:', stByte:'字节数:',
+      stModeEdit:'编辑', stModeView:'浏览',
+      stLn:'行 {n}', stLnRange:'行 {a}–{b}（{n} 行）', stLn1:'行 {a}（1 行）',
+      stHint:'双击行内文字即可修改 · Ctrl+S 存回源文件',
+      gutTip:'差异缩略条：整份文件压成一条，红条就是有差异的位置，点一下跳过去',
+      paneSplitTip:'左右拖动调整 A / B 两栏宽度，双击恢复等分',
+      msgSplitEven:'两栏已恢复等分（50 / 50）',
+      diffSum:'{n} 处差异', diffCap:'只显示前 {n} 条', diffSame:'没有差异', diffNone:'还没有内容',
+      ctxCopy:'复制', ctxCut:'剪切', ctxPaste:'粘贴', ctxDel:'删除',
+      ctxInfoSel:'{side} · 已选中 {n} 行', ctxInfoRow:'{side} · 第 {n} 行', ctxInfoNone:'{side} · 未选中',
+      copyToRight:'复制到右栏(B)', copyToLeft:'复制到左栏(A)',
+      moveToRight:'剪切到右栏(B)', moveToLeft:'剪切到左栏(A)',
+      pillEmpty:'还没载入文件', pillOneSide:'只载入了一侧', noFile:'未加载', pillSame:'没有差异', pillDiff:'{n} 处差异',
+      emptyTitle:'还没有内容可以比较',
+      emptyHint:'载入或粘贴两份文本（也可以直接把文件拖进来），A / B 会并排显示。',
+      dropHint:'<div class="dh-row1">拖入 2 个文件 → <span class="dh-badge">A</span> + <span class="dh-badge">B</span></div><div class="dh-row2">拖 1 个进空着的那栏 · 按住 <kbd>Alt</kbd> 拖进 <span class="dh-badge">B</span></div>',
+      aboutBlurb:'逐行文本比较。',
+      aboutT1:'真正的 diff', aboutD1:'patience + LCS 对齐，改动的行始终挨在一起。',
+      aboutT2:'字符级标记', aboutD2:'只标出真正变了的那几个字符。',
+      aboutT3:'就地修改', aboutD3:'双击行内文字直接改，改完存回源文件。',
+      aboutT4:'通用输出', aboutD4:'复制 / 保存标准 unified diff（--- / +++ / @@）。',
+      aboutAuthor:'作者', aboutAuthorName:'Suyu Diao, Firmware Engineer In LCFC',
+      stLines:'{n} 行', stLine:'{n} 行', stMeta:'{n} 行 · {size}', stMeta1:'{n} 行 · {size}',
+      sumSame:'完全一致', sumChanged:'新增 {add} · 删除 {del} · 修改 {mod}',
+      msgFound:'找到 {n} 处差异，两边都已标出，已跳到第一处',
+      msgAllSame:'两栏内容完全相同，没有差异',
+      msgCopied:'差异已复制到剪贴板', msgCopiedSel:'已复制 {n} 行',
+      msgCut:'已剪切 {n} 行', msgPasted:'已粘贴 {n} 行', msgDeleted:'已删除 {n} 行',
+      msgNoSel:'先在 A 或 B 里选中几行',
+      msgUndo:'已撤销', msgRedo:'已重做', msgNoUndo:'没有可撤销的操作', msgNoRedo:'没有可重做的操作',
+      msgSaved:'已保存：{p}', msgSavedPane:'已存回源文件：{p}', msgSaveFail:'保存失败：{e}',
+      msgNoSrc:'这一栏还没对上源文件 —— 用「另存为…」存到新位置，之后「保存」就直接写回那里',
+      msgNoDiff:'没有差异可以导出', msgClipEmpty:'剪贴板是空的', msgEmpty:'这一栏还是空的',
+      msgBig:'要比较 {n} 行 — 高亮可能会有点慢', msgReadFail:'读取文件失败：{e}',
+      needBoth:'先把 A 和 B 都载入',
+
+      /* Import dialog */
+      impTitle:'导入数据',
+      impDesc:'两个框分别对应 <b>A 栏</b> 和 <b>B 栏</b>，各填各的、互不影响。可以直接输入或粘贴文字，也可以把文件拖到框里，或者点 <b>File…</b> 挑本地文件。<b>留空的框不会动那一栏。</b>',
+      impColA:'A 栏 · 主文件', impColB:'B 栏 · 对比文件',
+      impPhA:'粘贴文本，或把文件拖到这里…',
+      impPhB:'粘贴文本，或把文件拖到这里…',
+      pickFileBtn:'选择文件…', fromClipBtn:'读剪贴板',
+      impApplyA:'只导入 A', impApplyB:'只导入 B', impBoth:'两个都导入',
+      impBothHint:'留空的框保持不变', cancel:'取消',
+      impFileTag:'{n} · {b}（点这里取消）', msgFilePicked:'{n} 已放进 {p} 框',
+      msgImpNone:'两个框都是空的，没有导入任何东西',
+      msgImpOne:'已导入 {p} 栏：{n} 行', msgImpSum:'已导入 — A 栏 {a} 行，B 栏 {b} 行',
+      msgClipIn:'剪贴板内容已放进 {p} 框', msgDropBox:'{n} 已放进 {p} 框',
+      msgDropFiles:'已拖入 {n} 个文件', msgDropNone:'拖入的内容读不出来（{t}）— 请从资源管理器拖文件进来，或用 Import data…',
+      msgEmptyBox:'这个框还是空的 — 输入、粘贴、拖文件进来，或者点「选择文件…」',
+      msgBoxFull:'{p} 框已经有内容了 — 先清空它'
+    }
+  };
+
+  var lang = saved.lang === 'zh' ? 'zh' : 'en';
+  var LIST_CAP = 3000;      // Never draw more than this many rows in the diff list; beyond it, only a hint
+
+  var $ = function(id){ return document.getElementById(id); };
+  var el = {
+    body: $('body'), rows: $('rows'), empty: $('empty'), pill: $('pill'), navPos: $('navPos'),
+    nameA: $('nameA'), nameB: $('nameB'), metaA: $('metaA'), metaB: $('metaB'),
+    headA: $('headA'), headB: $('headB'),
+    stA: $('stA'), stB: $('stB'), stSum: $('stSum'), stHint: $('stHint'),
+    stRel: $('stRel'), stAct: $('stAct'), stCur: $('stCur'), stSel: $('stSel'), stMode: $('stMode'),
+    stPos: $('stPos'),
+    optWs: $('optWs'), optCase: $('optCase'), optBlank: $('optBlank'), optWrap: $('optWrap'),
+    btnCompare: $('btnCompare'), btnPrev: $('btnPrev'), btnNext: $('btnNext'), btnList: $('btnList'),
+    btnCopy: $('btnCopy'), btnSave: $('btnSave'), btnLang: $('btnLang'),
+    btnUndo: $('btnUndo'), btnRedo: $('btnRedo'),
+    diffPanel: $('diffPanel'), diffSplit: $('diffSplit'), diffList: $('diffList'), diffSummary: $('diffSummary'),
+    diffBody: $('diffBody'), dFoldInfo: $('dFoldInfo'),
+    dRailA: $('dRailA'), dRailB: $('dRailB'), dThA: $('dThA'), dThB: $('dThB'),
+    grip0: $('grip0'), grip1: $('grip1'), grip2: $('grip2'), grip3: $('grip3'),
+    ctx: $('ctxMenu'), veil: $('veil'), dropHint: $('dropHint'), toastWrap: $('toastWrap'),
+    impMask: $('impMask'),
+    stage: $('stage'), paneSplit: $('paneSplit'), frameA: $('frameA'), frameB: $('frameB'),
+    railVA: $('railVA'), railVB: $('railVB'), railHA: $('railHA'), railHB: $('railHB'),
+    thVA: $('thVA'), thVB: $('thVB'), thHA: $('thHA'), thHB: $('thHB')
+  };
+
+  function mkSide(){ return { lines: [], name:'', path:'', eol:'\n', trail:false, bytes:0, enc:'', dirty:false }; }
+  var state = {
+    a: mkSide(), b: mkSide(),
+    rows: [], hunks: [], cur: -1,
+    sel: null, act: 'A',
+    opts: { ws: !!saved.ws, case: !!saved.case, blank: !!saved.blank, wrap: !!saved.wrap },
+    undo: [], redo: [], listH: saved.listH || 168, listOpen: saved.listOpen !== false,
+    folded: !!saved.folded, rangeW: +saved.rangeW || 0, cntW: +saved.cntW || 0, idxW: +saved.idxW || 0,
+    abFrac: +saved.abFrac > 0.05 && +saved.abFrac < 0.95 ? +saved.abFrac : 0.5, pending: null,
+    maxLen: { A: 0, B: 0 }, edit: null,
+    oneSide: false,       // Only one side holds text: no diff exists, the loaded side is shown as plain lines
+    sameHidden: false     // Collapse the whole bottom list when the content is identical, rather than leaving an empty frame
+  };
+  var hx = { A: 0, B: 0 }, hxMax = { A: 0, B: 0 }, charW = 0;   // Horizontal scroll offset per pane
+
+  function t(k){ return (I18N[lang] && I18N[lang][k]) || I18N.en[k] || k; }
+  function fill(s, map){ return String(s).replace(/\{(\w+)\}/g, function(m, k){ return map[k] != null ? map[k] : m; }); }
+  function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){
+    return c === '&' ? '&amp;' : c === '<' ? '&lt;' : c === '>' ? '&gt;' : '&quot;'; }); }
+  /* Left-pad with plain spaces (never NBSP) so a monospace line keeps its columns */
+  function pad(s, w){ s = String(s); while (s.length < w) s = ' ' + s; return s; }
+
+  function toast(msg, kind){
+    /* The same sentence twice in a row adds nothing: the first bubble is still up */
+    var prev = el.toastWrap.lastElementChild;
+    if (prev && prev.querySelector('.tx') && prev.querySelector('.tx').textContent === msg) return;
+    var d = document.createElement('div');
+    d.className = 'toast' + (kind ? ' ' + kind : '');
+    var ic = document.createElement('span');
+    ic.className = 'ic';
+    ic.textContent = kind === 'err' ? '!' : (kind === 'ok' ? '✓' : 'i');
+    var tx = document.createElement('span');
+    tx.className = 'tx';
+    tx.textContent = msg;
+    d.appendChild(ic); d.appendChild(tx);
+    el.toastWrap.appendChild(d);
+    setTimeout(function(){ if (d.parentNode) d.parentNode.removeChild(d); }, 2800);
+    while (el.toastWrap.children.length > 3) el.toastWrap.removeChild(el.toastWrap.firstChild);
+  }
+  /* One toast per comparison, with the same round tick the Binary Editor shows:
+     identical → "no differences", otherwise how many regions were found. */
+  function verdictToast(){
+    if (!state.a.lines.length && !state.b.lines.length) return;
+    var n = state.hunks.length;
+    if (n) toast(fill(t('msgFound'), { n: n }), 'ok');
+    else toast(t('msgAllSame'), 'ok');
+  }
+  /* Always the exact byte count first, then the matching larger unit once it is big enough —
+     64 -> "64 Bytes", 8,900 -> "8,900 Bytes · 8.7 KB". A KB / MB / GB figure never appears alone. */
+  function fmtBytes(n){
+    n = Math.max(0, +n || 0);
+    var bytes = n.toLocaleString('en-US') + ' Bytes';
+    var unit = '', u = function(v, name){
+      return String(v.toFixed(v >= 10 ? 0 : 1)).replace(/\.0$/, '') + ' ' + name;
+    };
+    if (n >= 1073741824) unit = u(n / 1073741824, 'GB');
+    else if (n >= 1048576) unit = u(n / 1048576, 'MB');
+    else if (n >= 1024) unit = u(n / 1024, 'KB');
+    return unit ? bytes + ' · ' + unit : bytes;
+  }
+  /* Compact form for narrow places such as the import dialog's file tag */
+  function fmtBytesShort(n){
+    n = Math.max(0, +n || 0);
+    if (n < 1024) return n + ' B';
+    if (n < 1048576) return (n / 1024).toFixed(n < 10240 ? 1 : 0) + ' KB';
+    return (n / 1048576).toFixed(1) + ' MB';
+  }
+
+  /* ================= text <-> lines (original line endings preserved, so saving is lossless) ================= */
+  function applyText(side, text){
+    var s = side === 'B' ? state.b : state.a;
+    s.text = String(text == null ? '' : text);
+    var m = /\r\n|\r|\n/.exec(s.text);
+    s.eol = m ? (m[0] === '\r\n' ? '\r\n' : '\n') : '\n';
+    var t2 = s.text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    s.trail = /\n$/.test(t2);
+    var lines = t2 ? t2.split('\n') : [];
+    if (lines.length && lines[lines.length - 1] === '') lines.pop();
+    s.lines = lines;
+    s.dirty = false;
+    s.bytes = new Blob([s.text]).size;
+  }
+  function sideText(s){ return s.lines.join(s.eol) + (s.trail && s.lines.length ? s.eol : ''); }
+
+  function normLine(s){
+    var x = s;
+    if (state.opts.ws) x = x.replace(/[ \t]+/g, ' ').replace(/^ | $/g, '');
+    if (state.opts.case) x = x.toLowerCase();
+    return x;
+  }
+
+  /* ================= diff algorithm: patience anchors with an LCS fallback ================= */
+  function diffRange(a, b, aLo, aHi, bLo, bHi, out){
+    while (aLo < aHi && bLo < bHi && a[aLo] === b[bLo]) { out.push({ t: 0, a: aLo++, b: bLo++ }); }
+    var aEnd = aHi, bEnd = bHi, tail = [];
+    while (aEnd > aLo && bEnd > bLo && a[aEnd - 1] === b[bEnd - 1]) {
+      aEnd--; bEnd--; tail.push({ t: 0, a: aEnd, b: bEnd });
+    }
+
+    if (aLo < aEnd || bLo < bEnd) {
+      if (aLo >= aEnd) {
+        for (var j = bLo; j < bEnd; j++) out.push({ t: 1, b: j });
+      } else if (bLo >= bEnd) {
+        for (var i = aLo; i < aEnd; i++) out.push({ t: -1, a: i });
+      } else {
+        var anchors = patienceAnchors(a, b, aLo, aEnd, bLo, bEnd);
+        if (anchors.length) {
+          var pa = aLo, pb = bLo;
+          for (var k = 0; k < anchors.length; k++) {
+            var ai = anchors[k][0], bi = anchors[k][1];
+            diffRange(a, b, pa, ai, pb, bi, out);
+            out.push({ t: 0, a: ai, b: bi });
+            pa = ai + 1; pb = bi + 1;
+          }
+          diffRange(a, b, pa, aEnd, pb, bEnd, out);
+        } else {
+          lcsRange(a, b, aLo, aEnd, bLo, bEnd, out);
+        }
+      }
+    }
+    for (var q = tail.length - 1; q >= 0; q--) out.push(tail[q]);
+  }
+
+  // A line occurring exactly once in both ranges is a reliable anchor; take their longest increasing subsequence
+  function patienceAnchors(a, b, aLo, aHi, bLo, bHi){
+    var ca = new Map(), cb = new Map(), i, k, e;
+    for (i = aLo; i < aHi; i++) { k = a[i]; e = ca.get(k); if (e) e.n++; else ca.set(k, { n: 1, i: i }); }
+    for (i = bLo; i < bHi; i++) { k = b[i]; e = cb.get(k); if (e) e.n++; else cb.set(k, { n: 1, i: i }); }
+    var cand = [];
+    ca.forEach(function(ea, key){
+      if (ea.n !== 1) return;
+      var eb = cb.get(key);
+      if (eb && eb.n === 1) cand.push([ea.i, eb.i]);
+    });
+    if (!cand.length) return [];
+    cand.sort(function(p, q){ return p[0] - q[0]; });
+
+    var tails = [], prev = new Array(cand.length), c, v, lo, hi, mid;
+    for (c = 0; c < cand.length; c++) {
+      v = cand[c][1]; lo = 0; hi = tails.length;
+      while (lo < hi) { mid = (lo + hi) >> 1; if (cand[tails[mid]][1] < v) lo = mid + 1; else hi = mid; }
+      prev[c] = lo > 0 ? tails[lo - 1] : -1;
+      if (lo === tails.length) tails.push(c); else tails[lo] = c;
+    }
+    var res = [], cur = tails.length ? tails[tails.length - 1] : -1;
+    while (cur >= 0) { res.push(cand[cur]); cur = prev[cur]; }
+    res.reverse();
+    return res;
+  }
+
+  // Small ranges are aligned exactly with LCS; huge ones become a whole-block replace (otherwise memory explodes)
+  function lcsRange(a, b, aLo, aHi, bLo, bHi, out){
+    var n = aHi - aLo, m = bHi - bLo, i, j;
+    if (n * m > 400000) {
+      for (i = 0; i < n; i++) out.push({ t: -1, a: aLo + i });
+      for (j = 0; j < m; j++) out.push({ t: 1, b: bLo + j });
+      return;
+    }
+    var w = m + 1, dp = new Uint32Array((n + 1) * w);
+    for (i = n - 1; i >= 0; i--) {
+      var row = i * w, next = (i + 1) * w;
+      for (j = m - 1; j >= 0; j--) {
+        dp[row + j] = a[aLo + i] === b[bLo + j]
+          ? dp[next + j + 1] + 1
+          : Math.max(dp[next + j], dp[row + j + 1]);
+      }
+    }
+    var x = 0, y = 0;
+    while (x < n && y < m) {
+      if (a[aLo + x] === b[bLo + y]) { out.push({ t: 0, a: aLo + x, b: bLo + y }); x++; y++; }
+      else if (dp[(x + 1) * w + y] >= dp[x * w + y + 1]) { out.push({ t: -1, a: aLo + x }); x++; }
+      else { out.push({ t: 1, b: bLo + y }); y++; }
+    }
+    while (x < n) { out.push({ t: -1, a: aLo + x }); x++; }
+    while (y < m) { out.push({ t: 1, b: bLo + y }); y++; }
+  }
+
+  /* ================= turn the op stream into side-by-side rows ================= */
+  function buildRows(ops, al, bl){
+    var rows = [], i = 0;
+    while (i < ops.length) {
+      var op = ops[i];
+      if (op.t === 0) {
+        rows.push({ t: 'eq', a: op.a + 1, b: op.b + 1, at: al[op.a], bt: bl[op.b] });
+        i++;
+        continue;
+      }
+      var dels = [], inss = [];
+      while (i < ops.length && ops[i].t === -1) { dels.push(ops[i].a); i++; }
+      while (i < ops.length && ops[i].t === 1) { inss.push(ops[i].b); i++; }
+      var pair = Math.min(dels.length, inss.length), x;
+      for (x = 0; x < pair; x++) {
+        rows.push({ t: 'mod', a: dels[x] + 1, b: inss[x] + 1, at: al[dels[x]], bt: bl[inss[x]] });
+      }
+      for (x = pair; x < dels.length; x++) rows.push({ t: 'del', a: dels[x] + 1, b: null, at: al[dels[x]], bt: null });
+      for (x = pair; x < inss.length; x++) rows.push({ t: 'ins', a: null, b: inss[x] + 1, at: null, bt: bl[inss[x]] });
+    }
+    if (state.opts.blank) {
+      rows = rows.filter(function(r){
+        if (r.t === 'del') return String(r.at).trim() !== '';
+        if (r.t === 'ins') return String(r.bt).trim() !== '';
+        if (r.t === 'mod') return !(String(r.at).trim() === '' && String(r.bt).trim() === '');
+        return true;
+      });
+    }
+    return rows;
+  }
+
+  /* ================= inline: the character range that actually changed ================= */
+  function inlineRange(a, b){
+    var n = Math.min(a.length, b.length), p = 0;
+    while (p < n && a.charAt(p) === b.charAt(p)) p++;
+    var s = 0, max = Math.min(a.length, b.length) - p;
+    while (s < max && a.charAt(a.length - 1 - s) === b.charAt(b.length - 1 - s)) s++;
+    var bs = p, be = b.length - s;
+    if (bs >= be) return null;              // pure insert / delete: marking the whole row is enough
+    return [bs, be];
+  }
+
+  /* ================= rendering ================= */
+  function gutCell(side, bar){
+    var d = document.createElement('div');
+    d.className = 'gut ' + side;
+    if (bar) { var i = document.createElement('i'); d.appendChild(i); }
+    return d;
+  }
+  function lnCell(n, side){
+    var d = document.createElement('div');
+    d.className = 'ln ' + side;
+    d.textContent = n == null ? '' : String(n);
+    return d;
+  }
+  function codeCell(text, side, other){
+    var d = document.createElement('div');
+    d.className = 'code ' + side;
+    if (text == null) { d.classList.add('empty'); return d; }
+    var sp = document.createElement('span');
+    sp.className = 'ctx';
+    if (other != null && text !== other) {
+      var rg = inlineRange(other, text);
+      if (rg && rg[1] > rg[0]) {
+        if (rg[0] > 0) sp.appendChild(document.createTextNode(text.slice(0, rg[0])));
+        var mk = document.createElement('mark');
+        mk.textContent = text.slice(rg[0], rg[1]);
+        sp.appendChild(mk);
+        if (rg[1] < text.length) sp.appendChild(document.createTextNode(text.slice(rg[1])));
+        d.appendChild(sp);
+        return d;
+      }
+    }
+    sp.textContent = text === '' ? ' ' : text;
+    d.appendChild(sp);
+    return d;
+  }
+
+  function render(){
+    var frag = document.createDocumentFragment();
+    for (var i = 0; i < state.rows.length; i++) {
+      var r = state.rows[i];
+      var row = document.createElement('div');
+      row.className = 'row ' + r.t + (r.hunkStart ? ' first-diff' : '');
+      row.dataset.i = String(i);
+      row.appendChild(gutCell('a', r.t === 'del' || r.t === 'mod'));
+      row.appendChild(lnCell(r.a, 'a'));
+      row.appendChild(codeCell(r.at, 'a', r.t === 'mod' ? r.bt : null));
+      row.appendChild(gutCell('b', r.t === 'ins' || r.t === 'mod'));
+      row.appendChild(lnCell(r.b, 'b'));
+      row.appendChild(codeCell(r.bt, 'b', r.t === 'mod' ? r.at : null));
+      frag.appendChild(row);
+    }
+    // Clear first, then attach everything at once: one reflow
+    while (el.rows.firstChild) el.rows.removeChild(el.rows.firstChild);
+    el.rows.appendChild(frag);
+    el.empty.classList.toggle('hide', state.rows.length > 0);
+    centerEmpty();
+    el.body.classList.toggle('wrap', state.opts.wrap);
+    paintSel();
+    markCurrent();
+    updateHxMax();
+    renderMaps();
+  }
+
+  /* Keep the filler hatch continuous across a run of empty rows. Each cell is offset by
+     minus its own top inside the list, so the stripes of one row pick up exactly where the
+     previous row stopped. Read all offsets first, then write: no layout thrash. */
+
+  /* ================= global diff strip (far left of the pane, whole file squeezed into one bar) ================= */
+  /* Red bars mark differences, the grey box shows which slice of the file is visible; clicking a bar
+     jumps to that hunk, clicking elsewhere scrolls proportionally - same as the Binary Editor minimap. */
+  var gmapSig = { A: '', B: '' };
+  function gmapOf(p){ return document.getElementById('gutMap' + p); }
+
+  /* ================= pane frames + centre splitter (same as Binary Editor) ================= */
+  /* Each pane has fixed columns: 26 (map strip) + 58 (line numbers) with a 9px splitter between; the rest is shared */
+  var SPLIT_W = 9, FIX_A = 26 + 58, FIX_B = 26 + 58;
+  var paneRatio = 0.5;                       // share of the flexible width taken by pane A
+  try{
+    var savedRatio = parseFloat(localStorage.getItem('tc.paneRatio') || '');
+    if (savedRatio > 0.08 && savedRatio < 0.92) paneRatio = savedRatio;
+  }catch(e){}
+  function flexTotal(){ return Math.max(0, el.body.clientWidth - FIX_A - SPLIT_W - FIX_B); }
+  function paneAWidth(){ return FIX_A + Math.round(flexTotal() * paneRatio); }
+  function applyPaneRatio(){
+    var t = flexTotal(); if (!t) return;
+    // At exactly half let 1fr split it so both panes stay identical; once dragged, pin pane A in pixels
+    if (Math.abs(paneRatio - 0.5) < 0.004) document.body.style.removeProperty('--aw');
+    else document.body.style.setProperty('--aw', Math.round(t * paneRatio) + 'px');
+  }
+  /* ================= per-pane horizontal scroll (shift .ctx, driven by the bar at the bottom) ================= */
+  function measureCharW(){
+    if (charW > 0) return charW;
+    var sp = document.createElement('span');
+    sp.style.cssText = 'position:absolute;left:-9999px;top:0;white-space:pre;font:inherit';
+    sp.textContent = '0123456789'.repeat(20);
+    el.body.appendChild(sp);
+    var w = sp.getBoundingClientRect().width / 200;
+    el.body.removeChild(sp);
+    charW = w > 0 ? w : 7.5;
+    return charW;
+  }
+  function codeW(side){
+    if (side === 'A') return Math.max(40, paneAWidth() - FIX_A);
+    return Math.max(40, el.body.clientWidth - paneAWidth() - SPLIT_W - FIX_B);
+  }
+  function applyHx(side){
+    el.rows.style.setProperty(side === 'A' ? '--hxA' : '--hxB', (-hx[side]) + 'px');
+  }
+  function updateHxMax(){
+    var cw = measureCharW(), ch = false;
+    ['A', 'B'].forEach(function(s){
+      var w = (state.maxLen[s] || 0) * cw + 18;          // 18 = .code left + right padding
+      var mx = state.opts.wrap ? 0 : Math.max(0, Math.ceil(w - codeW(s)));
+      if (mx !== hxMax[s]) { hxMax[s] = mx; ch = true; }
+      if (hx[s] > mx) { hx[s] = mx; ch = true; }
+    });
+    if (ch) { applyHx('A'); applyHx('B'); }
+  }
+  function scrollHx(side, delta){
+    if (!hxMax[side]) return;
+    var v = Math.max(0, Math.min(hxMax[side], hx[side] + delta));
+    if (v === hx[side]) return;
+    hx[side] = v; applyHx(side); paintRails();
+  }
+
+  /* ===== four bars: a vertical one on each pane's right edge, a horizontal one under each pane ===== */
+  var BAR = 11;
+  function stickyH(){ var s = document.getElementById('sticky'); return s ? s.offsetHeight : 0; }
+  /* #empty is pinned to #body, which also contains the sticky header rows: without this
+     offset the card centres on a box that starts above them and sits too high. */
+  function centerEmpty(){
+    if (!el.empty || !el.body) return;
+    el.empty.style.top = stickyH() + 'px';
+  }
+  function paintRails(){
+    var sh = stickyH(), has = state.rows.length > 0;
+    var viewH = Math.max(1, el.body.clientHeight - sh);
+    var contentH = Math.max(viewH, el.body.scrollHeight - sh);
+    ['A', 'B'].forEach(function(side){
+      var rail = side === 'A' ? el.railVA : el.railVB;
+      var th = side === 'A' ? el.thVA : el.thVB;
+      var rh = rail.clientHeight;
+      var on = has && rh > 26 && contentH > viewH + 1;
+      rail.classList.toggle('on', on);
+      if (!on) return;
+      var thH = Math.max(22, Math.min(rh, Math.round(viewH / contentH * rh)));
+      var travel = Math.max(1, rh - thH), maxScroll = Math.max(1, contentH - viewH);
+      th.style.height = thH + 'px';
+      th.style.top = Math.round(Math.max(0, Math.min(1, el.body.scrollTop / maxScroll)) * travel) + 'px';
+    });
+    ['A', 'B'].forEach(function(side){
+      var rail = side === 'A' ? el.railHA : el.railHB;
+      var th = side === 'A' ? el.thHA : el.thHB;
+      var rw = rail.clientWidth, mx = hxMax[side] || 0;
+      var on = has && rw > 30;                 // with content the bar always shows (thumb fills the track, not draggable, when nothing overflows)
+      rail.classList.toggle('on', on);
+      if (!on) return;
+      var cw = Math.max(40, codeW(side));
+      var thW = mx > 0 ? Math.max(22, Math.min(rw, Math.round(cw / (cw + mx) * rw))) : rw;
+      var travel = Math.max(1, rw - thW);
+      th.style.width = thW + 'px';
+      th.style.left = Math.round(mx > 0 ? (hx[side] / mx) * travel : 0) + 'px';
+      th.style.opacity = mx > 0 ? '1' : '.45';
+    });
+  }
+  function bindRailV(rail, th){
+    var drag = false, y0 = 0, v0 = 0, travel = 1, range = 1;
+    rail.addEventListener('mousedown', function(e){
+      if (e.button !== 0 || !rail.classList.contains('on')) return;
+      e.preventDefault();
+      var rr = rail.getBoundingClientRect(), tr = th.getBoundingClientRect();
+      travel = Math.max(1, rr.height - tr.height);
+      range = Math.max(1, (el.body.scrollHeight - stickyH()) - Math.max(1, el.body.clientHeight - stickyH()));
+      if (e.target !== th) {
+        var want = (e.clientY - rr.top - tr.height / 2) / travel;
+        el.body.scrollTop = Math.max(0, Math.min(range, want * range));
+      }
+      drag = true; y0 = e.clientY; v0 = el.body.scrollTop;
+      rail.classList.add('drag'); document.body.classList.add('resizing-bar');
+      paintRails();
+    });
+    window.addEventListener('mousemove', function(e){
+      if (!drag) return;
+      el.body.scrollTop = Math.max(0, Math.min(range, v0 + (e.clientY - y0) / travel * range));
+    });
+    function stop(){
+      if (!drag) return;
+      drag = false; rail.classList.remove('drag'); document.body.classList.remove('resizing-bar');
+    }
+    window.addEventListener('mouseup', stop);
+    window.addEventListener('blur', stop);
+  }
+  function bindRailH(rail, th, side){
+    var drag = false, x0 = 0, v0 = 0, travel = 1, range = 1;
+    rail.addEventListener('mousedown', function(e){
+      if (e.button !== 0 || !rail.classList.contains('on')) return;
+      e.preventDefault();
+      var rr = rail.getBoundingClientRect(), tr = th.getBoundingClientRect();
+      travel = Math.max(1, rr.width - tr.width);
+      range = Math.max(1, hxMax[side]);
+      if (e.target !== th) {
+        var want = (e.clientX - rr.left - tr.width / 2) / travel;
+        hx[side] = Math.max(0, Math.min(range, want * range)); applyHx(side); paintRails();
+      }
+      drag = true; x0 = e.clientX; v0 = hx[side];
+      rail.classList.add('drag'); document.body.classList.add('resizing-bar');
+    });
+    window.addEventListener('mousemove', function(e){
+      if (!drag) return;
+      hx[side] = Math.max(0, Math.min(range, v0 + (e.clientX - x0) / travel * range));
+      applyHx(side); paintRails();
+    });
+    function stop(){
+      if (!drag) return;
+      drag = false; rail.classList.remove('drag'); document.body.classList.remove('resizing-bar');
+    }
+    window.addEventListener('mouseup', stop);
+    window.addEventListener('blur', stop);
+  }
+  bindRailV(el.railVA, el.thVA); bindRailV(el.railVB, el.thVB);
+  bindRailH(el.railHA, el.thHA, 'A'); bindRailH(el.railHB, el.thHB, 'B');
+  // Horizontal bars under the list's A / B columns (one each, independent)
+  bindDiffRail(el.dRailA, el.dThA, 'a'); bindDiffRail(el.dRailB, el.dThB, 'b');
+  // Four column boundaries: # | line range | line count | A | B, all draggable left and right
+  bindColGrip(el.grip0, 0); bindColGrip(el.grip1, 1); bindColGrip(el.grip2, 2); bindColGrip(el.grip3, 3);
+  // Shift + wheel scrolls the active pane horizontally
+  el.body.addEventListener('wheel', function(e){
+    if (!e.shiftKey) return;
+    var d = (e.deltaY || e.deltaX);
+    if (!d) return;
+    if (!hxMax[state.act]) return;
+    e.preventDefault();
+    scrollHx(state.act, d);
+  }, { passive: false });
+
+  function placeChrome(){
+    if (!el.stage || !el.paneSplit) return;
+    var bs = el.body.getBoundingClientRect(), st = el.stage.getBoundingClientRect();
+    var ox = Math.round(bs.left - st.left), oy = Math.round(bs.top - st.top);
+    var h = el.body.clientHeight;
+    var sx = ox + paneAWidth() - el.body.scrollLeft;   // left edge of the splitter (follows horizontal scrolling)
+    var rx = ox + el.body.clientWidth;
+    var has = state.rows.length > 0;
+    el.paneSplit.style.top = oy + 'px';
+    el.paneSplit.style.height = h + 'px';
+    el.paneSplit.style.left = Math.round(sx) + 'px';
+    el.paneSplit.classList.toggle('show', has && h > 8);
+    el.frameA.style.top = oy + 'px';
+    el.frameA.style.left = ox + 'px';
+    el.frameA.style.height = h + 'px';
+    el.frameA.style.width = Math.max(0, Math.round(sx) - ox) + 'px';
+    el.frameB.style.top = oy + 'px';
+    el.frameB.style.left = Math.round(sx + SPLIT_W) + 'px';
+    el.frameB.style.height = h + 'px';
+    el.frameB.style.width = Math.max(0, rx - Math.round(sx + SPLIT_W)) + 'px';
+    el.frameA.classList.toggle('on', has);
+    el.frameB.classList.toggle('on', has);
+    el.frameA.classList.toggle('active', state.act === 'A');
+    el.frameB.classList.toggle('active', state.act === 'B');
+
+    // Scrollbar placement: vertical ones hug each pane's right edge (2px clear of the frame), horizontal ones its bottom
+    var sh = stickyH(), FR = 2;
+    var vTop = oy + sh, vH = Math.max(0, h - sh);
+    var showH = has && vH > 48;
+    var vBottom = vTop + vH - (showH ? BAR : 0) - FR;
+    el.railVA.style.left = Math.round(sx - BAR - FR) + 'px';
+    el.railVA.style.top = vTop + 'px';
+    el.railVA.style.height = Math.max(0, vBottom - vTop) + 'px';
+    el.railVB.style.left = Math.round(rx - BAR - FR) + 'px';
+    el.railVB.style.top = vTop + 'px';
+    el.railVB.style.height = Math.max(0, vBottom - vTop) + 'px';
+    el.railHA.style.left = (ox + FIX_A) + 'px';
+    el.railHA.style.top = Math.round(vTop + vH - BAR - FR) + 'px';
+    el.railHA.style.width = Math.max(0, Math.round(sx - BAR - FR) - (ox + FIX_A)) + 'px';
+    el.railHB.style.left = Math.round(sx + SPLIT_W + FIX_B) + 'px';
+    el.railHB.style.top = Math.round(vTop + vH - BAR - FR) + 'px';
+    el.railHB.style.width = Math.max(0, Math.round(rx - BAR - FR) - Math.round(sx + SPLIT_W + FIX_B)) + 'px';
+    paintRails();
+  }
+  (function paneSplitter(){
+    var sp = el.paneSplit; if (!sp) return;
+    var dragging = false, startX = 0, startFlex = 0;
+    function moveTo(clientX){
+      var t = flexTotal(); if (!t) return;
+      var min = Math.min(200, Math.round(t * 0.22));
+      var flex = Math.max(min, Math.min(t - min, startFlex + (clientX - startX)));
+      paneRatio = flex / t;
+      applyPaneRatio();
+      renderMaps();
+    }
+    sp.addEventListener('mousedown', function(e){
+      if (e.button !== 0) return;
+      e.preventDefault();
+      dragging = true; startX = e.clientX; startFlex = flexTotal() * paneRatio;
+      sp.classList.add('dragging'); document.body.classList.add('resizing-col');
+    });
+    window.addEventListener('mousemove', function(e){ if (dragging) moveTo(e.clientX); });
+    function stop(){
+      if (!dragging) return;
+      dragging = false;
+      sp.classList.remove('dragging'); document.body.classList.remove('resizing-col');
+      try{ localStorage.setItem('tc.paneRatio', String(paneRatio)); }catch(e){}
+      renderMaps();
+    }
+    window.addEventListener('mouseup', stop);
+    window.addEventListener('blur', stop);
+    sp.addEventListener('dblclick', function(){          // double-click resets to 50 / 50
+      paneRatio = 0.5; applyPaneRatio();
+      try{ localStorage.removeItem('tc.paneRatio'); }catch(e){}
+      renderMaps(); toast(t('msgSplitEven'));
+    });
+    sp.addEventListener('keydown', function(e){          // keyboard nudge: 16px per ← / →
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      e.preventDefault(); e.stopPropagation();
+      var t = flexTotal(); if (!t) return;
+      paneRatio = Math.max(0.12, Math.min(0.88, paneRatio + (e.key === 'ArrowRight' ? 16 : -16) / t));
+      applyPaneRatio(); renderMaps();
+    });
+  })();
+  // Toggling the diff list, dragging its height or resizing the window all change the pane height: re-place frames and splitter
+  if (typeof ResizeObserver === 'function') {
+    try { new ResizeObserver(function(){ placeChrome(); }).observe(el.body); } catch (e) {}
+  }
+
+  function placeMaps(){
+    var sticky = document.getElementById('sticky');
+    var sh = sticky ? sticky.offsetHeight : 0;
+    var stage = document.getElementById('stage');
+    var box = stage ? stage.getBoundingClientRect() : null;
+    var bodyBox = el.body.getBoundingClientRect();
+    var top = sh + (bodyBox.top - (box ? box.top : bodyBox.top));
+    var h = Math.max(0, el.body.clientHeight - sh);
+    ['A', 'B'].forEach(function(p){
+      var m = gmapOf(p); if (!m) return;
+      m.style.top = Math.round(top) + 'px';
+      m.style.height = Math.round(h) + 'px';
+      m.classList.toggle('none', h < 8);       // window too short - the header rows eat it all, so hide the strip
+    });
+    // Pane B's map strip follows pane B's left edge (stays aligned while scrolling horizontally)
+    var gb = el.rows.querySelector('.row .gut.b');
+    var mb = gmapOf('B');
+    if (mb) mb.style.left = (gb ? Math.round(gb.offsetLeft - el.body.scrollLeft)
+                               : Math.round(paneAWidth() + SPLIT_W)) + 'px';
+    updateHxMax();
+    placeChrome();
+  }
+  function renderMaps(){
+    placeMaps();
+    var total = state.rows.length;
+    ['A', 'B'].forEach(function(p){
+      var m = gmapOf(p); if (!m) return;
+      var bars = document.getElementById('gmBars' + p);
+      var view = document.getElementById('gmView' + p);
+      var on = total > 0;
+      m.classList.toggle('show', on);
+      if (!on) {
+        if (bars.innerHTML) bars.innerHTML = '';
+        view.classList.remove('show');
+        gmapSig[p] = '';
+        return;
+      }
+      var H = m.clientHeight || 0;
+      if (H <= 6) return;
+      var sig = total + ':' + state.hunks.length + ':' + H;
+      if (gmapSig[p] !== sig) {
+        gmapSig[p] = sig;
+        var html = '', lastBottom = -1, n = Math.min(state.hunks.length, 2000);
+        for (var k = 0; k < n; k++) {
+          var r0 = state.hunks[k].row;
+          var r1 = state.hunks[k].endRow != null ? state.hunks[k].endRow : r0;
+          if (r1 < r0) r1 = r0;
+          var y = Math.floor(r0 / total * H);
+          var hh = Math.max(2, Math.round((r1 - r0 + 1) / total * H));
+          if (y <= lastBottom) y = lastBottom + 1;      // nudge 1px down on collision so every bar stays visible
+          if (y >= H) break;
+          hh = Math.min(hh, H - y);
+          html += '<i data-k="' + k + '" style="top:' + y + 'px;height:' + hh + 'px"></i>';
+          lastBottom = y + hh - 1;
+        }
+        bars.innerHTML = html;
+      }
+      // viewport box: which slice of the whole file is visible
+      var sticky = document.getElementById('sticky');
+      var sh = sticky ? sticky.offsetHeight : 0;
+      var ch = el.body.clientHeight - sh, content = el.body.scrollHeight - sh;
+      if (content > ch + 1 && ch > 0) {
+        var vt = Math.max(0, Math.min(H - 2, el.body.scrollTop / content * H));
+        var vh = Math.max(6, ch / content * H);
+        view.classList.add('show');
+        view.style.top = Math.round(vt) + 'px';
+        view.style.height = Math.round(Math.min(vh, H - vt)) + 'px';
+      } else view.classList.remove('show');
+    });
+  }
+  ['A', 'B'].forEach(function(p){
+    var m = gmapOf(p);
+    if (!m) return;
+    m.addEventListener('click', function(e){
+      if (!state.rows.length) return;
+      var box = m.getBoundingClientRect();
+      var H = Math.max(1, m.clientHeight);
+      var y = e.clientY - box.top;
+      // Hit a red bar exactly first (dense diffs make bars a few pixels tall, so proportional maths lands on the wrong hunk)
+      var best = null, near = 5;
+      Array.prototype.forEach.call(document.getElementById('gmBars' + p).children, function(el2){
+        var t2 = parseFloat(el2.style.top) || 0, h2 = parseFloat(el2.style.height) || 0;
+        var d = (y >= t2 && y <= t2 + h2) ? 0 : Math.min(Math.abs(y - t2), Math.abs(y - t2 - h2));
+        if (d <= near) { near = d; best = el2; }
+      });
+      if (best) {
+        state.act = p; updatePaneActive();
+        gotoHunk(+best.dataset.k, true);
+        return;
+      }
+      var sticky = document.getElementById('sticky');
+      var sh = sticky ? sticky.offsetHeight : 0;
+      var ch = el.body.clientHeight - sh, content = el.body.scrollHeight - sh;
+      var ratio = Math.max(0, Math.min(1, y / H));
+      el.body.scrollTop = Math.max(0, ratio * content - ch / 2);
+      renderMaps();
+    });
+  });
+
+  function rowNode(i){ return el.rows.children[i] || null; }
+
+  function markCurrent(){
+    var old = el.rows.querySelector('.row.cur');
+    if (old) old.classList.remove('cur');
+    if (state.cur < 0 || !state.hunks[state.cur]) return;
+    var row = rowNode(state.hunks[state.cur].row);
+    if (row) row.classList.add('cur');
+  }
+
+  /* ================= selection ================= */
+  function paintSel(){
+    var old = el.rows.querySelectorAll('.sela, .selb');
+    for (var q = 0; q < old.length; q++) old[q].classList.remove('sela', 'selb');
+    var s = state.sel;
+    if (s) {
+      var lo = Math.min(s.anchor, s.focus), hi = Math.max(s.anchor, s.focus);
+      for (var i = lo; i <= hi; i++) {
+        var row = rowNode(i);
+        if (row) row.classList.add(s.side === 'A' ? 'sela' : 'selb');
+      }
+    }
+    updateStatus();
+  }
+  function setSel(side, anchor, focus){
+    state.sel = { side: side, anchor: anchor, focus: focus };
+    state.act = side;
+    updatePaneActive();
+    paintSel();
+  }
+  function clearSel(){ state.sel = null; paintSel(); }
+
+  /* ---- keyboard selection movement (feels like Binary Editor: ↑↓ one row, Shift extends, Home/End jump to the ends) ---- */
+  function hasLine(i, side){
+    var r = state.rows[i];
+    return !!r && (side === 'A' ? r.a : r.b) != null;
+  }
+  function firstLineRow(side, from, dir){
+    for (var i = from; i >= 0 && i < state.rows.length; i += dir) if (hasLine(i, side)) return i;
+    return -1;
+  }
+  function rowIntoView(i){
+    var row = rowNode(i);
+    if (!row) return;
+    var top = row.offsetTop, ch = row.offsetHeight || 19;
+    var view = el.body.clientHeight, cur = el.body.scrollTop, pad = 78;
+    if (top - pad < cur) el.body.scrollTop = Math.max(0, top - pad);
+    else if (top + ch + 8 > cur + view) el.body.scrollTop = top + ch + 8 - view;
+  }
+  function selAllRows(side){
+    var first = -1, last = -1, i;
+    for (i = 0; i < state.rows.length; i++) {
+      if (!hasLine(i, side)) continue;
+      if (first < 0) first = i;
+      last = i;
+    }
+    if (first < 0) return false;
+    setSel(side, first, last);
+    rowIntoView(first);
+    return true;
+  }
+  function moveSelBy(step, extend){
+    var side = state.act;
+    if (!state.rows.length) return;
+    if (!state.sel || state.sel.side !== side) {
+      var f = firstLineRow(side, step > 0 ? 0 : state.rows.length - 1, step > 0 ? 1 : -1);
+      if (f < 0) return;
+      setSel(side, f, f);
+      rowIntoView(f);
+      return;
+    }
+    var i = firstLineRow(side, state.sel.focus + step, step > 0 ? 1 : -1);
+    if (i < 0) return;
+    setSel(side, extend ? state.sel.anchor : i, i);
+    rowIntoView(i);
+  }
+  function moveSelEdge(which, extend){
+    var side = state.act;
+    var i = which === 'first' ? firstLineRow(side, 0, 1) : firstLineRow(side, state.rows.length - 1, -1);
+    if (i < 0) return;
+    setSel(side, extend && state.sel ? state.sel.anchor : i, i);
+    rowIntoView(i);
+  }
+
+  function sideOfRow(i, want){
+    var r = state.rows[i];
+    if (!r) return want || 'A';
+    if (want === 'A' && r.a == null) return 'B';
+    if (want === 'B' && r.b == null) return 'A';
+    return want || 'A';
+  }
+
+  // selected rows -> the contiguous line-number span in that pane
+  function selRange(){
+    var s = state.sel;
+    if (!s) return null;
+    var lo = Math.min(s.anchor, s.focus), hi = Math.max(s.anchor, s.focus);
+    var idx = [], i, n;
+    for (i = lo; i <= hi; i++) {
+      n = s.side === 'A' ? state.rows[i].a : state.rows[i].b;
+      if (n != null) idx.push(n - 1);
+    }
+    if (!idx.length) return null;
+    var from = idx[0], to = idx[idx.length - 1];
+    var arr = s.side === 'A' ? state.a.lines : state.b.lines;
+    return { side: s.side, from: from, count: to - from + 1, r0: lo, r1: hi,
+             lines: arr.slice(from, to + 1) };
+  }
+
+  // start/count of the aligned span in the other pane (used when copying / cutting across)
+  function otherSpan(side, r0, r1){
+    var oKey = side === 'A' ? 'b' : 'a';
+    var start = 0, count = 0, i;
+    for (i = 0; i < r0; i++) if (state.rows[i][oKey] != null) start++;
+    for (i = r0; i <= r1; i++) if (state.rows[i][oKey] != null) count++;
+    return { start: start, count: count };
+  }
+
+  /* ================= editing ================= */
+  function snapshot(){ return { a: state.a.lines.slice(), b: state.b.lines.slice() }; }
+  function pushUndo(){
+    state.undo.push(snapshot());
+    if (state.undo.length > 60) state.undo.shift();
+    state.redo.length = 0;
+    updateUndoBtns();
+  }
+  function commit(edit){
+    pushUndo();
+    edit();
+    recompare();
+  }
+  function spliceLines(side, from, delCount, add){
+    var s = side === 'A' ? state.a : state.b;
+    var args = [from, delCount].concat(add || []);
+    Array.prototype.splice.apply(s.lines, args);
+    s.dirty = true;
+    s.bytes = new Blob([sideText(s)]).size;
+  }
+  function updateUndoBtns(){
+    el.btnUndo.disabled = !state.undo.length;
+    el.btnRedo.disabled = !state.redo.length;
+  }
+
+  function doCopy(){
+    var r = selRange();
+    if (!r) { toast(t('msgNoSel')); return; }
+    vscode.postMessage({ type: 'copy', text: r.lines.join('\n') });
+    toast(fill(t('msgCopiedSel'), { n: r.count }));
+  }
+  function doCut(){
+    var r = selRange();
+    if (!r) { toast(t('msgNoSel')); return; }
+    vscode.postMessage({ type: 'copy', text: r.lines.join('\n') });
+    state.lastDel = { side: r.side, from: r.from };
+    commit(function(){ spliceLines(r.side, r.from, r.count, null); });
+    toast(fill(t('msgCut'), { n: r.count }));
+  }
+  function doDelete(){
+    var r = selRange();
+    if (!r) { toast(t('msgNoSel')); return; }
+    state.lastDel = { side: r.side, from: r.from };
+    commit(function(){ spliceLines(r.side, r.from, r.count, null); });
+    toast(fill(t('msgDeleted'), { n: r.count }));
+  }
+  function doPaste(){
+    var r = selRange();
+    var side = r ? r.side : state.act;
+    var arr = side === 'A' ? state.a.lines : state.b.lines;
+    var from = r ? r.from : arr.length;
+    // Just cut / deleted a block: paste it back where it was instead of appending at the end
+    if (!r && state.lastDel && state.lastDel.side === side) from = Math.min(state.lastDel.from, arr.length);
+    var count = r ? r.count : 0;
+    state.pending = { kind: 'paste', side: side, from: from, count: count };
+    vscode.postMessage({ type: 'clipboardRead', pane: side, purpose: 'paste' });
+  }
+  function applyPaste(text){
+    var p = state.pending; state.pending = null;
+    if (!p) return;
+    if (text == null || text === '') { toast(t('msgClipEmpty')); return; }
+    var add = String(text).replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+    if (add.length && add[add.length - 1] === '') add.pop();
+    state.lastDel = null;
+    commit(function(){ spliceLines(p.side, p.from, p.count, add); });
+    toast(fill(t('msgPasted'), { n: add.length }));
+  }
+
+  // Send this pane's selection to the other pane: overwrite at the aligned position, insert when it is shorter
+  function toOtherPane(move){
+    var r = selRange();
+    if (!r) { toast(t('msgNoSel')); return; }
+    var dst = r.side === 'A' ? 'B' : 'A';
+    var span = otherSpan(r.side, r.r0, r.r1);
+    var count = r.count;
+    commit(function(){
+      spliceLines(dst, span.start, span.count, r.lines);
+      if (move) spliceLines(r.side, r.from, count, null);
+    });
+    toast(move ? fill(t('msgCut'), { n: count }) : fill(t('msgPasted'), { n: count }));
+  }
+
+  function undo(){
+    if (!state.undo.length) { toast(t('msgNoUndo')); return; }
+    state.redo.push(snapshot());
+    var s = state.undo.pop();
+    state.a.lines = s.a.slice(); state.b.lines = s.b.slice();
+    state.a.dirty = state.b.dirty = true;
+    state.a.bytes = new Blob([sideText(state.a)]).size;
+    state.b.bytes = new Blob([sideText(state.b)]).size;
+    updateUndoBtns();
+    recompare();
+    toast(t('msgUndo'));
+  }
+  function redo(){
+    if (!state.redo.length) { toast(t('msgNoRedo')); return; }
+    state.undo.push(snapshot());
+    var s = state.redo.pop();
+    state.a.lines = s.a.slice(); state.b.lines = s.b.slice();
+    state.a.dirty = state.b.dirty = true;
+    state.a.bytes = new Blob([sideText(state.a)]).size;
+    state.b.bytes = new Blob([sideText(state.b)]).size;
+    updateUndoBtns();
+    recompare();
+    toast(t('msgRedo'));
+  }
+
+  function maxLenOf(lines){ var m = 0; for (var i = 0; i < lines.length; i++) { var l = lines[i].length; if (l > m) m = l; } return m; }
+
+  /* ================= comparison entry point ================= */
+  function compare(scrollTop){
+    var t0 = (window.performance && performance.now) ? performance.now() : Date.now();
+    if (state.edit) endEdit(false);
+    /* Comparing against a side that holds no file is not a diff: it used to build one row per
+       line of the other side (a 647-line file became 647 "added" rows, half of them an empty
+       filler block), which looks alarming and is the slowest thing this tool does.
+       But clearing one side is a perfectly normal action, so this branch must not be an error:
+       the side that still has text is laid out as plain lines (no diff marks, no hunks), the
+       empty side keeps its blank column. Only the Compare button complains. */
+    var hasA = state.a.lines.length > 0, hasB = state.b.lines.length > 0;
+    state.oneSide = (hasA !== hasB);
+    state.maxLen.A = maxLenOf(state.a.lines);
+    state.maxLen.B = maxLenOf(state.b.lines);
+    var rows = [], hunks = [];
+    if (state.oneSide) {
+      var live = hasA ? state.a.lines : state.b.lines;
+      for (var n = 0; n < live.length; n++) {
+        rows.push(hasA
+          ? { t: 'eq', a: n + 1, b: null, at: live[n], bt: null }
+          : { t: 'eq', a: null, b: n + 1, at: null, bt: live[n] });
+      }
+    } else {
+      var a = state.a.lines.map(normLine), b = state.b.lines.map(normLine);
+      var ops = [];
+      diffRange(a, b, 0, a.length, 0, b.length, ops);
+      rows = buildRows(ops, state.a.lines, state.b.lines);
+
+      // A contiguous run of differences is one hunk: navigation, list and maps all key off it
+      var curH = null;
+      for (var i = 0; i < rows.length; i++) {
+        var r = rows[i];
+        if (r.t === 'eq') { curH = null; continue; }
+        if (!curH) {
+          curH = { row: i, endRow: i, a0: r.a, a1: r.a, b0: r.b, b1: r.b, del: 0, ins: 0, mod: 0 };
+          hunks.push(curH);
+          rows[i].hunkStart = true;
+        }
+        curH.endRow = i;
+        if (r.a != null) curH.a1 = r.a;
+        if (r.b != null) curH.b1 = r.b;
+        if (r.t === 'del') curH.del++; else if (r.t === 'ins') curH.ins++; else curH.mod++;
+      }
+    }
+    state.rows = rows;
+    state.hunks = hunks;
+    state.sel = null;
+    state.cur = hunks.length ? 0 : -1;
+
+    var keep = el.body.scrollTop;
+    render();
+    updateStats();
+    updateHeads();
+    renderList();
+    if (state.cur >= 0) gotoHunk(0, scrollTop, true); else updateNav();
+    if (!scrollTop) el.body.scrollTop = keep;
+
+    var dt = ((window.performance && performance.now) ? performance.now() : Date.now()) - t0;
+    if (rows.length > 20000) toast(fill(t('msgBig'), { n: rows.length }));
+    return dt;
+  }
+  function recompare(){ compare(false); }
+
+  function updateNav(){
+    if (!state.hunks.length) { el.navPos.textContent = '— / —'; return; }
+    /* Left number is padded with spaces to the width of the total, so the slash keeps
+       its position while you walk the differences ("  1 / 24" -> " 12 / 24"). */
+    var total = String(state.hunks.length), cur = String(state.cur >= 0 ? state.cur + 1 : 0);
+    el.navPos.innerHTML = '<b>' + pad(cur, total.length) + '</b> / ' + total;
+  }
+
+  function metaText(n, bytes){ return fill(t(n === 1 ? 'stMeta1' : 'stMeta'), { n: n, size: fmtBytes(bytes) }); }
+  function updateHeads(){
+    var a = state.a, b = state.b;
+    /* The A / B badge sits right before this, so the name slot only carries the file name (or the empty state) */
+    el.nameA.textContent = a.name || t('noFile');
+    el.nameA.title = a.path || a.name || '';
+    el.nameB.textContent = b.name || t('noFile');
+    el.nameB.title = b.path || b.name || '';
+    /* Size chip only once there is something to size: an empty pane already says "Not loaded" */
+    el.metaA.textContent = a.lines.length ? metaText(a.lines.length, a.bytes) : '';
+    el.metaB.textContent = b.lines.length ? metaText(b.lines.length, b.bytes) : '';
+    /* The badge only means something once there is content: an empty pane is not "being edited" */
+    el.headA.classList.toggle('dirty', !!a.dirty && a.lines.length > 0);
+    el.headB.classList.toggle('dirty', !!b.dirty && b.lines.length > 0);
+    // File names live in the list header, centred above the A and B columns; when folded they move to the title bar
+    var haCell = el.diffList.querySelector('.h-pv.a .hn');
+    var hbCell = el.diffList.querySelector('.h-pv.b .hn');
+    if (haCell) { haCell.textContent = a.name || t('noFile'); haCell.title = a.path || a.name || ''; }
+    if (hbCell) { hbCell.textContent = b.name || t('noFile'); hbCell.title = b.path || b.name || ''; }
+    if (el.dFoldInfo) {
+      el.dFoldInfo.innerHTML = '<span class="fa">' + esc(a.name || t('noFile')) + '</span>'
+        + ' → <span class="fb">' + esc(b.name || t('noFile')) + '</span>';
+      el.dFoldInfo.title = (a.path || a.name || '') + '\n→ ' + (b.path || b.name || '');
+    }
+    updatePaneActive();
+  }
+  function updatePaneActive(){
+    el.headA.classList.toggle('active', state.act === 'A');
+    el.headB.classList.toggle('active', state.act === 'B');
+    if (el.frameA) {
+      el.frameA.classList.toggle('active', state.act === 'A');
+      el.frameB.classList.toggle('active', state.act === 'B');
+    }
+    updateStatus();
+  }
+
+  /* ===== Live fields of the bottom status bar =====
+     Modelled on the Binary Editor one: A = B / A ≠ B chip · edit pane · caret · selection · mode,
+     with "bytes / offset" swapped for "line". */
+  function lineOfRow(side, idx){
+    var r = state.rows[idx];
+    if (!r) return null;
+    var n = side === 'A' ? r.a : r.b;
+    if (n == null) n = side === 'A' ? r.b : r.a;    // this side is empty (added / deleted), borrow the other side's number
+    return n == null ? null : n;
+  }
+  function updateStatus(){
+    if (!el.stRel) return;
+    var a = state.a.lines.length, b = state.b.lines.length;
+    el.stRel.className = '';
+    if (!a && !b) {
+      el.stRel.textContent = '';
+    } else if (!state.hunks.length) {
+      el.stRel.className = 'relchip same'; el.stRel.textContent = 'A = B';
+    } else {
+      el.stRel.className = 'relchip diff'; el.stRel.textContent = 'A ≠ B';
+    }
+
+    el.stAct.textContent = state.act;
+    /* A blue, B purple — the same identity colours the pane tags use, never the
+       theme button colour (that one can be orange in someone's theme).
+       Red / green stay reserved for content meaning (removed / added). */
+    el.stAct.style.color = state.act === 'A' ? 'var(--curA)' : 'var(--curB)';
+
+    /* Diff position, in the same slot the Binary Editor puts it. */
+    var nHunks = state.hunks.length;
+    if (el.stPos) {
+      el.stPos.textContent = nHunks
+        ? (state.cur >= 0 ? state.cur + 1 : 0) + ' / ' + nHunks
+        : '—';
+    }
+
+    var s = state.sel, ln = s ? lineOfRow(s.side, s.focus) : null;
+    el.stCur.textContent = ln == null ? '—' : fill(t('stLn'), { n: ln });
+
+    if (!s) {
+      el.stSel.textContent = '—';
+    } else {
+      var lo = Math.min(s.anchor, s.focus), hi = Math.max(s.anchor, s.focus);
+      var cnt = hi - lo + 1;
+      if (cnt === 1) {
+        el.stSel.textContent = fill(t('stLn1'), { a: ln });
+      } else {
+        el.stSel.textContent = fill(t('stLnRange'),
+          { a: lineOfRow(s.side, lo), b: lineOfRow(s.side, hi), n: cnt });
+      }
+    }
+    el.stMode.textContent = state.edit ? t('stModeEdit') : t('stModeView');
+    /* Browse mode used to be muted (looked like a missing value) - use body colour like every other field, accent while editing */
+    el.stMode.style.color = state.edit ? 'var(--accent)' : 'var(--text)';
+  }
+
+  /* Empty pane = every button in that pane's strip is dead, exactly like the
+     Binary Editor. Only "Open" stays live, because that is how you fill it. */
+  function updatePaneGates(){
+    ['A', 'B'].forEach(function(p){
+      var s = p === 'A' ? state.a : state.b;
+      var has = !!(s && (s.lines.length || s.name));
+      ['save', 'saveAs', 'clear', 'cut', 'copy', 'paste', 'del'].forEach(function(k){
+        var b = $('' + k + p);
+        if (b) b.disabled = !has;
+      });
+    });
+  }
+
+  function updateStats(){
+    el.stA.textContent = 'A: ' + metaText(state.a.lines.length, state.a.bytes);
+    el.stB.textContent = 'B: ' + metaText(state.b.lines.length, state.b.bytes);
+    var n = state.hunks.length;
+    /* The status bar is the Binary Editor one, item for item: no running commentary
+       and no added/removed summary on the right, only the live fields. */
+    if (el.stHint) el.stHint.textContent = '';
+    if (el.stSum) el.stSum.textContent = '';
+
+    el.pill.classList.remove('diff', 'same');
+    if (!state.a.lines.length && !state.b.lines.length) {
+      el.pill.textContent = t('pillEmpty');
+    } else if (state.oneSide) {
+      /* One side cleared / not loaded yet: there is nothing to compare, and saying "A = B" here
+         would be a lie */
+      el.pill.textContent = t('pillOneSide');
+    } else if (!n) {
+      el.pill.textContent = t('pillSame');
+      el.pill.classList.add('same');
+    } else {
+      el.pill.textContent = fill(t('pillDiff'), { n: n });
+      el.pill.classList.add('diff');
+    }
+
+    var empty = !state.rows.length;
+    el.empty.classList.toggle('hide', !empty);
+    centerEmpty();
+    el.btnPrev.disabled = el.btnNext.disabled = !n;
+    el.btnCopy.disabled = el.btnSave.disabled = !n;
+    updateUndoBtns();
+    updatePaneGates();
+    updateStatus();
+    /* Report both panes to the host whenever content changes: splits / moved groups restore from it (see __tcSnap below) */
+    if (state.a.lines.length || state.b.lines.length) tcHadContent = true;
+    if (window.__tcSnap) window.__tcSnap();
+  }
+
+  function gotoHunk(idx, scroll, noList){
+    if (idx < 0 || idx >= state.hunks.length) return;
+    state.cur = idx;
+    updateNav();
+    markCurrent();
+    if (scroll) {
+      var h = state.hunks[idx];
+      var row = rowNode(h.row);
+      if (row) {
+        var top = row.offsetTop - el.body.clientHeight / 3;
+        el.body.scrollTop = Math.max(0, top);
+      }
+    }
+    if (!noList) markListRow();
+  }
+
+  /* ================= diff list ================= */
+  function renderList(){
+    el.diffList.innerHTML = '';
+    var n = state.hunks.length;
+    if (!n) {
+      /* "Identical" only when both sides were actually compared; one loaded side is not a match */
+      el.diffSummary.textContent = state.oneSide ? t('diffNone')
+        : ((state.a.lines.length || state.b.lines.length) ? t('diffSame') : t('diffNone'));
+      hideEmptyList();
+      return;
+    }
+    el.diffSummary.textContent = '';     // the title keeps only "Diffs", no trailing "N diff region(s)"
+    if (state.sameHidden) {              // last round was identical and the panel got hidden: differences are back, restore it
+      state.sameHidden = false;
+      if (state.listOpen) openList();
+    }
+
+    var frag = document.createDocumentFragment();
+
+    // Column headers: number | range | line count | A file name (centred) | B file name (centred)
+    var head = document.createElement('div');
+    head.className = 'dcols';
+    head.appendChild(headText('h-idx', '#'));
+    head.appendChild(headText('h-range', t('colRange')));
+    head.appendChild(headText('h-cnt', t('colLines')));
+    head.appendChild(headFile('a', state.a));
+    head.appendChild(headFile('b', state.b));
+    frag.appendChild(head);
+
+    fitRangeCol();
+
+    var upto = Math.min(n, LIST_CAP);
+    for (var k = 0; k < upto; k++) {
+      var h = state.hunks[k];
+      var d = document.createElement('div');
+      d.className = 'drow' + (k === state.cur ? ' cur' : '');
+      d.dataset.h = String(k);
+
+      var aFrom = h.a0 != null ? h.a0 : h.a1, aTo = h.a1 != null ? h.a1 : h.a0;
+      var bFrom = h.b0 != null ? h.b0 : h.b1, bTo = h.b1 != null ? h.b1 : h.b0;
+
+      var rg = document.createElement('span');
+      rg.className = 'rng';
+      rg.appendChild(rangeCell(aFrom, aTo, 'ra'));
+      var arw = document.createElement('span');
+      arw.className = 'arw'; arw.textContent = '→';
+      rg.appendChild(arw);
+      rg.appendChild(rangeCell(bFrom, bTo, 'rb'));
+
+      var cnt = document.createElement('span');
+      cnt.className = 'cnt';
+      cnt.textContent = String(h.del + h.ins + h.mod);
+
+      var idx = document.createElement('span');
+      idx.className = 'idx';
+      idx.textContent = String(k + 1);
+
+      d.appendChild(idx); d.appendChild(rg); d.appendChild(cnt);
+      d.appendChild(previewCell('a', preview(h, 'a')));
+      d.appendChild(previewCell('b', preview(h, 'b')));
+      frag.appendChild(d);
+    }
+    el.diffList.appendChild(frag);
+    if (state.listOpen) openList(); else placeColSeps();
+    // The vertical scrollbar only appears once rows fill the box and narrows the columns - measure again next frame
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(layoutDiff);
+    else layoutDiff();
+  }
+
+  /* ================= per-column horizontal scroll for the list's A / B columns =================
+     One offset per column (the whole column shifts together), driven by the thin bar underneath.
+     oxMax = pixels by which the longest line overflows the visible width; 0 means it fits, no bar. */
+  var ox = { a: 0, b: 0 }, oxMax = { a: 0, b: 0 };
+
+  function applyOx(){
+    el.diffList.style.setProperty('--oxa', ox.a.toFixed(0) + 'px');
+    el.diffList.style.setProperty('--oxb', ox.b.toFixed(0) + 'px');
+  }
+  function measureOx(){
+    if (!el.diffPanel.classList.contains('show')) return;   // measuring while hidden gives all zeros
+    var mx = { a: 0, b: 0 };
+    var cells = el.diffList.querySelectorAll('.pv');
+    for (var i = 0; i < cells.length; i++) {
+      var pv = cells[i];
+      var k = pv.classList.contains('a') ? 'a' : 'b';
+      var box = pv.firstChild, inn = box && box.firstChild;
+      if (!box || !inn) continue;
+      var extra = Math.ceil(inn.getBoundingClientRect().width - box.clientWidth);
+      if (extra > mx[k]) mx[k] = extra;
+    }
+    oxMax.a = Math.max(0, mx.a);
+    oxMax.b = Math.max(0, mx.b);
+    ox.a = Math.min(ox.a, oxMax.a);
+    ox.b = Math.min(ox.b, oxMax.b);
+    applyOx();
+  }
+  function paintDiffRails(){
+    if (!el.dRailA || !el.dRailB) return;
+    var list = [['a', el.dRailA, el.dThA], ['b', el.dRailB, el.dThB]];
+    for (var i = 0; i < list.length; i++) {
+      var k = list[i][0], rail = list[i][1], th = list[i][2];
+      var rw = rail.clientWidth, mx = oxMax[k];
+      var on = rw > 24 && mx > 0 && state.listOpen && !state.folded;
+      rail.classList.toggle('on', on);
+      if (!on) continue;
+      var thW = Math.max(24, Math.round(rw / (rw + mx) * rw));
+      var travel = Math.max(1, rw - thW);
+      th.style.width = thW + 'px';
+      th.style.left = Math.round((ox[k] / mx) * travel) + 'px';
+    }
+  }
+  /* Position the two bars against the real widths of the header's A / B columns */
+  function placeDiffRails(){
+    if (!el.diffBody || !el.dRailA) return;
+    var head = el.diffList.querySelector('.dcols');
+    if (!head) return;
+    var ha = head.querySelector('.h-pv.a'), hb = head.querySelector('.h-pv.b');
+    if (!ha || !hb) return;
+    var box = el.diffBody.getBoundingClientRect();
+    var ra = ha.getBoundingClientRect(), rb = hb.getBoundingClientRect();
+    el.dRailA.style.left = Math.round(ra.left - box.left + 4) + 'px';
+    el.dRailA.style.width = Math.max(0, Math.round(ra.width - 8)) + 'px';
+    el.dRailB.style.left = Math.round(rb.left - box.left + 4) + 'px';
+    el.dRailB.style.width = Math.max(0, Math.round(rb.width - 8)) + 'px';
+    paintDiffRails();
+  }
+  function layoutDiff(){
+    placeColSeps();
+    measureOx();
+    placeDiffRails();
+  }
+  function bindDiffRail(rail, th, k){
+    var drag = false, x0 = 0, v0 = 0, travel = 1, range = 1;
+    rail.addEventListener('mousedown', function(e){
+      if (e.button !== 0 || !rail.classList.contains('on')) return;
+      e.preventDefault();
+      var rr = rail.getBoundingClientRect(), tr = th.getBoundingClientRect();
+      travel = Math.max(1, rr.width - tr.width);
+      range = Math.max(1, oxMax[k]);
+      if (e.target !== th) {
+        var want = (e.clientX - rr.left - tr.width / 2) / travel;
+        ox[k] = Math.max(0, Math.min(range, want * range)); applyOx(); paintDiffRails();
+      }
+      drag = true; x0 = e.clientX; v0 = ox[k];
+      rail.classList.add('drag'); document.body.classList.add('resizing-bar');
+    });
+    window.addEventListener('mousemove', function(e){
+      if (!drag) return;
+      ox[k] = Math.max(0, Math.min(range, v0 + (e.clientX - x0) / travel * range));
+      applyOx(); paintDiffRails();
+    });
+    function stop(){
+      if (!drag) return;
+      drag = false; rail.classList.remove('drag'); document.body.classList.remove('resizing-bar');
+    }
+    window.addEventListener('mouseup', stop);
+    window.addEventListener('blur', stop);
+  }
+
+  /* Separator positions are computed from the header's real column widths and written to #diffList
+     as --dx1/2/3; rows and header both inherit them, so each column reads as one unbroken hairline */
+  function placeColSeps(){
+    var head = el.diffList.querySelector('.dcols');
+    if (!head || !head.getClientRects().length) return;
+    var hi = head.querySelector('.h-idx'),
+        hr = head.querySelector('.h-range'), hc = head.querySelector('.h-cnt'),
+        ha = head.querySelector('.h-pv.a'), hb = head.querySelector('.h-pv.b');
+    if (!hi || !hr || !hc || !ha || !hb) return;
+    var base = head.getBoundingClientRect().left;
+    var x0 = Math.round(hi.getBoundingClientRect().right + 4 - base);
+    var x1 = Math.round(hr.getBoundingClientRect().right + 4 - base);
+    var x2 = Math.round(hc.getBoundingClientRect().right + 4 - base);
+    var x3 = Math.round((ha.getBoundingClientRect().right + hb.getBoundingClientRect().left) / 2 - base);
+    el.diffList.style.setProperty('--dx0', x0 + 'px');
+    el.diffList.style.setProperty('--dx1', x1 + 'px');
+    el.diffList.style.setProperty('--dx2', x2 + 'px');
+    el.diffList.style.setProperty('--dx3', x3 + 'px');
+    // Four draggable grips sitting on those hairlines, grabbable over the full column height
+    var off = Math.round(base - el.diffBody.getBoundingClientRect().left);
+    var can = state.listOpen && !state.folded;
+    var gs = [[el.grip0, x0], [el.grip1, x1], [el.grip2, x2], [el.grip3, x3]];
+    for (var gi = 0; gi < gs.length; gi++) {
+      var g = gs[gi][0];
+      if (!g) continue;
+      g.style.left = (off + gs[gi][1]) + 'px';
+      g.classList.toggle('show', can);
+    }
+  }
+  function rangeCell(from, to, cls){
+    var s = document.createElement('span');
+    s.className = cls + (from == null ? ' nul' : '');
+    s.textContent = from == null ? '—' : rangeTxt(from, to);
+    return s;
+  }
+  function previewCell(side, text){
+    var sp = document.createElement('span');
+    sp.className = 'pv ' + side;
+    var tx = document.createElement('span');
+    tx.className = 'tx';
+    var inn = document.createElement('span');
+    inn.className = 'txin';
+    inn.textContent = text;
+    tx.appendChild(inn);
+    sp.appendChild(tx);
+    sp.title = text;
+    return sp;
+  }
+  function headText(cls, label){
+    var s = document.createElement('span');
+    s.className = cls;
+    s.textContent = label;
+    return s;
+  }
+  // Header A / B cells: a small block plus the file name, centred over the column
+  function headFile(side, f){
+    var sp = document.createElement('span');
+    sp.className = 'h-pv ' + side;
+    var nm = document.createElement('span');
+    nm.className = 'hn';
+    nm.textContent = f.name || t('noFile');
+    nm.title = f.path || f.name || '';
+    sp.appendChild(nm);
+    return sp;
+  }
+  function rangeTxt(a, b){
+    if (a == null && b == null) return '—';
+    if (a === b) return String(a);
+    return a + '–' + b;
+  }
+  function preview(h, key){
+    // First non-empty line of the hunk, truncated when too long
+    var i, v = null;
+    for (i = h.row; i < state.rows.length && state.rows[i].t !== 'eq'; i++) {
+      v = key === 'a' ? state.rows[i].at : state.rows[i].bt;
+      if (v != null && String(v).trim() !== '') break;
+    }
+    if (v == null) return '—';
+    var s = String(v).replace(/^\s+|\s+$/g, '');
+    if (s.length > 160) s = s.slice(0, 160) + '…';
+    return s === '' ? '∅' : s;
+  }
+  function markListRow(){
+    var old = el.diffList.querySelector('.drow.cur');
+    if (old) old.classList.remove('cur');
+    var d = el.diffList.querySelector('.drow[data-h="' + state.cur + '"]');
+    if (d) {
+      d.classList.add('cur');
+      if (d.scrollIntoView) { try { d.scrollIntoView({ block: 'nearest' }); } catch (e) {} }
+    }
+  }
+  function openList(){
+    state.listOpen = true;
+    el.diffPanel.classList.add('show');
+    el.diffSplit.classList.toggle('show', !state.folded);
+    el.diffPanel.style.height = state.listH + 'px';
+    el.btnList.classList.add('on');
+    fitRangeCol();
+    syncFoldBtn();
+    savePrefs();
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(layoutDiff);
+    else layoutDiff();
+  }
+  /* When the content is identical (or not compared yet) the diff list goes away with its title bar:
+     no height and no splitter left behind, or a big empty box hangs below the editor.
+     Display only - state.listOpen is untouched, so the panel comes back on the next real difference. */
+  function hideEmptyList(){
+    if (state.sameHidden && !el.diffPanel.classList.contains('show')) return;
+    state.sameHidden = true;
+    state.folded = false;
+    el.diffPanel.classList.remove('show', 'folded');
+    el.diffSplit.classList.remove('show');
+    el.btnList.classList.remove('on');
+  }
+  function closeList(){
+    state.listOpen = false;
+    state.folded = false;
+    el.diffPanel.classList.remove('show', 'folded');
+    el.diffSplit.classList.remove('show');
+    el.btnList.classList.remove('on');
+    syncFoldBtn();
+    savePrefs();
+  }
+
+  /* ===== Fold / unfold: folding leaves only the title bar (difference count and file names stay visible) =====
+     The small triangle button in the toolbar is gone, so clicking the title bar's blank area is the only way back */
+  function syncFoldBtn(){ /* no button left to sync; kept so existing call sites stay valid */ }
+  function foldList(){
+    if (!state.listOpen) { openList(); }
+    state.folded = true;
+    el.diffPanel.classList.add('folded');
+    el.diffSplit.classList.remove('show');     // no height dragging while folded
+    syncFoldBtn();
+    savePrefs();
+  }
+  function unfoldList(){
+    state.folded = false;
+    el.diffPanel.classList.remove('folded');
+    if (!state.listOpen) { openList(); return; }
+    el.diffSplit.classList.add('show');
+    el.diffPanel.style.height = state.listH + 'px';
+    fitRangeCol();
+    syncFoldBtn();
+    savePrefs();
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(layoutDiff);
+    else layoutDiff();
+  }
+  function toggleFold(){ if (state.folded || !state.listOpen) unfoldList(); else foldList(); }
+
+  /* ===== A → B column widths: auto-sized from the line-number digits, still draggable by hand ===== */
+  function autoRangeW(){
+    var mx = Math.max(state.a.lines.length, state.b.lines.length, 1);
+    var d = String(mx).length;
+    var cw = charW > 0 ? charW : 7.5;              // the list uses the same monospace stack as the body
+    var cell = Math.ceil((2 * d + 1) * cw) + 8;    // widest form is "1719–1721"
+    return Math.min(220, Math.max(96, cell * 2 + 18));
+  }
+  function curRangeW(){
+    var v = parseFloat(getComputedStyle(el.diffPanel).getPropertyValue('--c-range'));
+    return v > 0 ? v : 104;
+  }
+  function curCntW(){
+    var v = parseFloat(getComputedStyle(el.diffPanel).getPropertyValue('--c-cnt'));
+    return v > 0 ? v : 30;
+  }
+  function curIdxW(){
+    var v = parseFloat(getComputedStyle(el.diffPanel).getPropertyValue('--c-idx'));
+    return v > 0 ? v : 30;
+  }
+  /* All four column widths are derived from state and written to CSS variables: row number / range / count / A's share */
+  function applyColWidths(){
+    var idx = state.idxW > 0 ? Math.max(22, Math.min(96, state.idxW)) : 30;
+    var range = state.rangeW > 0 ? Math.max(80, Math.min(460, state.rangeW)) : autoRangeW();
+    var cnt = state.cntW > 0 ? Math.max(24, Math.min(140, state.cntW)) : 30;
+    var f = Math.min(0.9, Math.max(0.1, state.abFrac));
+    el.diffPanel.style.setProperty('--c-idx', Math.round(idx) + 'px');
+    el.diffPanel.style.setProperty('--c-range', Math.round(range) + 'px');
+    el.diffPanel.style.setProperty('--c-cnt', Math.round(cnt) + 'px');
+    el.diffPanel.style.setProperty('--ga', (f * 1000).toFixed(1));
+    el.diffPanel.style.setProperty('--gb', ((1 - f) * 1000).toFixed(1));
+    return range;
+  }
+  function fitRangeCol(){
+    var want = applyColWidths();
+    placeColSeps();               // widths changed, so move the separators with them
+    return want;
+  }
+
+  /* ================= unified diff (copy / save) ================= */
+  function unifiedDiff(){
+    var rows = state.rows, C = 3;
+    var head = '--- ' + (state.a.name || 'A') + '\n+++ ' + (state.b.name || 'B') + '\n';
+    var changes = [], i;
+    for (i = 0; i < rows.length; i++) if (rows[i].t !== 'eq') changes.push(i);
+    if (!changes.length) return head;
+
+    var groups = [], start = changes[0], prev = changes[0];
+    for (i = 1; i < changes.length; i++) {
+      if (changes[i] - prev <= 2 * C + 1) { prev = changes[i]; continue; }
+      groups.push([start, prev]); start = prev = changes[i];
+    }
+    groups.push([start, prev]);
+
+    var out = [head];
+    groups.forEach(function(g){
+      var s = Math.max(0, g[0] - C), e = Math.min(rows.length - 1, g[1] + C);
+      var oldStart = 0, newStart = 0, oldCount = 0, newCount = 0, k;
+      for (k = s; k <= e; k++) {
+        if (rows[k].a != null) { if (!oldStart) oldStart = rows[k].a; oldCount++; }
+        if (rows[k].b != null) { if (!newStart) newStart = rows[k].b; newCount++; }
+      }
+      out.push('@@ -' + oldStart + ',' + oldCount + ' +' + newStart + ',' + newCount + ' @@\n');
+      for (k = s; k <= e; k++) {
+        var r = rows[k];
+        if (r.t === 'eq') out.push(' ' + (r.at == null ? '' : r.at) + '\n');
+        else if (r.t === 'mod') { out.push('-' + (r.at == null ? '' : r.at) + '\n'); out.push('+' + (r.bt == null ? '' : r.bt) + '\n'); }
+        else if (r.t === 'del') out.push('-' + (r.at == null ? '' : r.at) + '\n');
+        else out.push('+' + (r.bt == null ? '' : r.bt) + '\n');
+      }
+    });
+    return out.join('');
+  }
+
+  /* ================= loading ================= */
+  // Replace content without recomputing the diff; import paths call this for both panes, then compare once
+  function putSide(side, msg){
+    var s = side === 'B' ? state.b : state.a;
+    applyText(side, msg.text);
+    s.name = String(msg.name || '');
+    s.path = String(msg.path || '');
+    s.enc = String(msg.enc || '');
+    if (msg.bytes != null) s.bytes = +msg.bytes;
+  }
+  function setSide(side, msg){
+    putSide(side, msg);
+    compare(false);
+  }
+  function loadBoth(a, b, quiet){
+    if (a) {
+      applyText('A', a.text);
+      state.a.name = a.name || ''; state.a.path = a.path || ''; state.a.enc = a.enc || '';
+      if (a.bytes != null) state.a.bytes = +a.bytes;
+    }
+    if (b) {
+      applyText('B', b.text);
+      state.b.name = b.name || ''; state.b.path = b.path || ''; state.b.enc = b.enc || '';
+      if (b.bytes != null) state.b.bytes = +b.bytes;
+    }
+    compare(true);
+    /* Both sides loaded = a real comparison result, so say it out loud once
+       (a split/moved restore replays this too, and stays quiet). */
+    if (!quiet && a && b) verdictToast();
+  }
+
+  function clearSide(side){
+    applyText(side, '');
+    (side === 'A' ? state.a : state.b).name = '';
+    (side === 'A' ? state.a : state.b).path = '';
+    compare(false);
+    /* Flush the new (possibly empty) state now: the debounce is 600ms and closing the tab inside
+       that window used to leave the cleared side in the saved snapshot. */
+    if (window.__tcSnap) window.__tcSnap(true);
+  }
+
+  function saveSide(side, as){
+    var s = side === 'A' ? state.a : state.b;
+    if (!s.lines.length) { toast(t('msgEmpty')); return; }
+    endEdit(false);                     // flush the in-progress edit into the model first, so the newest text is what gets saved
+    var text = sideText(s);
+    if (!as) {
+      // With a source path, write straight back; without one, send the name too so the host can look it up
+      // in the project first and only ask for a path (i.e. show "Save As") when that really fails
+      vscode.postMessage({ type: 'savePane', pane: side, path: s.path, name: s.name, text: text, enc: s.enc });
+      return;
+    }
+    var base = s.name || (side === 'A' ? 'A' : 'B') + '.txt';
+    vscode.postMessage({ type: 'saveAs', pane: side, text: text, enc: s.enc, suggested: base });
+  }
+
+  /* ================= context menu ================= */
+  function openCtx(x, y, side, rowIdx){
+    var r = selRange();
+    var hasSel = !!(r && r.side === side);
+    $('ctxCopy').disabled = !hasSel;
+    $('ctxCut').disabled = !hasSel;
+    $('ctxDelete').disabled = !hasSel;
+    $('ctxPaste').disabled = false;
+    $('ctxToOther').disabled = !hasSel;
+    $('ctxMoveToOther').disabled = !hasSel;
+    $('ctxToOtherLbl').textContent = t(side === 'A' ? 'copyToRight' : 'copyToLeft');
+    $('ctxToOtherIc').textContent = side === 'A' ? '➡' : '⬅';
+    $('ctxMoveToOtherLbl').textContent = t(side === 'A' ? 'moveToRight' : 'moveToLeft');
+
+    var ln = rowIdx >= 0 ? (side === 'A' ? state.rows[rowIdx].a : state.rows[rowIdx].b) : null;
+    $('ctxPaneTag').textContent = side;
+    el.ctx.querySelector('.ctxHead').classList.toggle('parB', side === 'B');
+    $('ctxInfo').textContent = hasSel ? fill(t(r.count === 1 ? 'ctxInfoSel1' : 'ctxInfoSel'), { side: side, n: r.count })
+      : (ln != null ? fill(t('ctxInfoRow'), { side: side, n: ln })
+                    : fill(t('ctxInfoNone'), { side: side }));
+
+    el.ctx.classList.add('show');
+    var w = el.ctx.offsetWidth, h = el.ctx.offsetHeight;
+    el.ctx.style.left = Math.max(6, Math.min(x, window.innerWidth - w - 6)) + 'px';
+    el.ctx.style.top = Math.max(6, Math.min(y, window.innerHeight - h - 6)) + 'px';
+  }
+  function closeCtx(){ el.ctx.classList.remove('show'); }
+
+  /* ================= in-place line editing (double-click / Enter / F2) ================= */
+  // Line number -> row index (puts the caret back on the same line after a re-render)
+  function lineRow(side, lineNo){
+    for (var i = 0; i < state.rows.length; i++) {
+      if ((side === 'A' ? state.rows[i].a : state.rows[i].b) === lineNo) return i;
+    }
+    return -1;
+  }
+  function caretOffset(node){
+    var sel = window.getSelection();
+    if (!sel || !sel.rangeCount) return 0;
+    var r = sel.getRangeAt(0);
+    if (!node.contains(r.endContainer)) return 0;
+    var pre = document.createRange();
+    pre.selectNodeContents(node);
+    try { pre.setEnd(r.endContainer, r.endOffset); } catch (e) { return 0; }
+    return pre.toString().length;
+  }
+  function putCaret(node, off){
+    if (!node || !window.getSelection) return;
+    var sel = window.getSelection(), rng = document.createRange();
+    var left = Math.max(0, off == null ? node.textContent.length : off);
+    var walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT, null, false);
+    var n, done = false;
+    while ((n = walker.nextNode())) {
+      if (left <= n.nodeValue.length) { rng.setStart(n, left); done = true; break; }
+      left -= n.nodeValue.length;
+    }
+    if (done) rng.collapse(true);
+    else { rng.selectNodeContents(node); rng.collapse(false); }
+    sel.removeAllRanges(); sel.addRange(rng);
+  }
+  function beginEdit(side, rowIdx, where){
+    if (rowIdx < 0 || !state.rows.length) return;
+    var row = rowNode(rowIdx);
+    if (!row) return;
+    var cell = row.querySelector('.code.' + (side === 'A' ? 'a' : 'b'));
+    if (!cell || cell.classList.contains('empty')) return;
+    var ctx = cell.querySelector('.ctx');
+    var lineNo = side === 'A' ? state.rows[rowIdx].a : state.rows[rowIdx].b;
+    if (!ctx || lineNo == null) return;
+    if (state.edit && state.edit.cell === cell) { putCaret(ctx, null); return; }
+    endEdit(false);
+    var s = side === 'A' ? state.a : state.b;
+    ctx.textContent = s.lines[lineNo - 1] == null ? '' : s.lines[lineNo - 1];
+    cell.classList.add('edit');
+    cell.setAttribute('contenteditable', 'plaintext-only');
+    if (cell.getAttribute('contenteditable') !== 'plaintext-only') cell.setAttribute('contenteditable', 'true');
+    state.edit = { side: side, line: lineNo, cell: cell, ctx: ctx, changed: false, snap: snapshot() };
+    state.act = side; updatePaneActive();
+    cell.focus();
+    putCaret(ctx, where === 'start' ? 0 : null);
+    if (where && where.clientX != null) {           // double-click: put the caret between the characters that were clicked
+      var r = null;
+      try { r = document.caretRangeFromPoint(where.clientX, where.clientY); } catch (e) {}
+      if (r && ctx.contains(r.startContainer)) {
+        var sel = window.getSelection();
+        if (sel) { sel.removeAllRanges(); sel.addRange(r); }
+      }
+    }
+    rowIntoView(rowIdx);
+  }
+  function endEdit(doCompare){
+    var ed = state.edit; if (!ed) return;
+    state.edit = null;
+    if (ed.cell.getAttribute('contenteditable')) ed.cell.removeAttribute('contenteditable');
+    ed.cell.classList.remove('edit');
+    var s = ed.side === 'A' ? state.a : state.b;
+    if (s.lines[ed.line - 1] === '' && ed.ctx.textContent === '') ed.ctx.textContent = ' ';
+    s.bytes = new Blob([sideText(s)]).size;
+    if (ed.changed && ed.snap) {
+      state.undo.push(ed.snap);
+      if (state.undo.length > 60) state.undo.shift();
+      state.redo.length = 0;
+      updateUndoBtns();
+    }
+    if (doCompare) recompare();
+    else { updateHeads(); updateStats(); }
+  }
+  function splitEditedLine(){
+    var ed = state.edit; if (!ed) return;
+    var side = ed.side, lineNo = ed.line;
+    var text = ed.cell.textContent;
+    var off = caretOffset(ed.ctx);
+    var s = side === 'A' ? state.a : state.b;
+    s.lines.splice(lineNo - 1, 1, text.slice(0, off), text.slice(off));
+    s.dirty = true;
+    ed.cell.removeAttribute('contenteditable');
+    ed.cell.classList.remove('edit');
+    state.edit = null;
+    if (ed.snap) { state.undo.push(ed.snap); if (state.undo.length > 60) state.undo.shift(); state.redo.length = 0; updateUndoBtns(); }
+    recompare();
+    beginEdit(side, lineRow(side, lineNo + 1), 'start');
+  }
+
+  /* ================= events: row selection / context menu ================= */
+  var dragging = false;
+  var stickyEl = document.getElementById('sticky');
+  var mapTick = false;
+  el.body.addEventListener('scroll', function(){
+    stickyEl.classList.toggle('scrolled', el.body.scrollTop > 2);
+    // The map strip tracks the viewport: recompute at most once per frame
+    if (mapTick) return;
+    mapTick = true;
+    (window.requestAnimationFrame || function(f){ return setTimeout(f, 16); })(function(){
+      mapTick = false;
+      renderMaps();
+    });
+  }, { passive: true });
+  window.addEventListener('resize', function(){ renderMaps(); centerEmpty(); });
+  function rowIndexOf(node){
+    var r = node && node.closest ? node.closest('.row') : null;
+    return r ? +r.dataset.i : -1;
+  }
+  function sideOf(node, i, x){
+    // Clicks often land on an inner element (.ctx text wrapper, <mark> highlight, line-number cell), and
+    // reading only target's own class would treat the right pane as the left - walk up to the nearest a/b column
+    var e = node && node.nodeType === 3 ? node.parentNode : node;
+    if (e && e.closest) {
+      var cell = e.closest('.code.a, .code.b, .ln.a, .ln.b, .gut.a, .gut.b');
+      if (cell) return cell.classList.contains('b') ? 'B' : 'A';
+      if (x != null) {                               // fallback: which side of the midline the point falls on
+        var row = e.closest('.row');
+        var cb = row && row.querySelector('.code.b');
+        if (cb && x >= cb.getBoundingClientRect().left) return 'B';
+      }
+    }
+    return sideOfRow(i, 'A');
+  }
+
+  el.rows.addEventListener('mousedown', function(e){
+    if (e.button !== 0) return;
+    // Editing a line: commit when clicking elsewhere, but let the browser place the caret inside the edited cell
+    if (state.edit) {
+      if (!state.edit.cell.contains(e.target)) { endEdit(true); return; }
+      return;
+    }
+    var i = rowIndexOf(e.target);
+    if (i < 0) return;
+    var side = sideOf(e.target, i, e.clientX);
+    setSel(side, i, i);
+    dragging = true;
+    e.preventDefault();
+  });
+  // Double-click edits this row in place
+  el.rows.addEventListener('dblclick', function(e){
+    var i = rowIndexOf(e.target);
+    if (i < 0) return;
+    e.preventDefault();
+    beginEdit(sideOf(e.target, i, e.clientX), i, e);
+  });
+  el.rows.addEventListener('input', function(){
+    var ed = state.edit; if (!ed) return;
+    var txt = ed.cell.textContent;
+    ed.changed = true;
+    var s = ed.side === 'A' ? state.a : state.b;
+    if (txt.indexOf('\n') >= 0 || txt.indexOf('\r') >= 0) {       // multi-line paste: split it into separate lines
+      var parts = txt.replace(/\r\n?/g, '\n').split('\n');
+      var side = ed.side, lineNo = ed.line;
+      if (ed.snap) { state.undo.push(ed.snap); if (state.undo.length > 60) state.undo.shift(); state.redo.length = 0; updateUndoBtns(); }
+      s.lines.splice.apply(s.lines, [lineNo - 1, 1].concat(parts));
+      s.dirty = true;
+      ed.cell.removeAttribute('contenteditable');
+      ed.cell.classList.remove('edit');
+      state.edit = null;
+      recompare();
+      beginEdit(side, lineRow(side, lineNo + parts.length - 1), 'end');
+      return;
+    }
+    s.lines[ed.line - 1] = txt;
+    s.dirty = true;
+    el.headA.classList.toggle('dirty', !!state.a.dirty && state.a.lines.length > 0);
+    el.headB.classList.toggle('dirty', !!state.b.dirty && state.b.lines.length > 0);
+  });
+  el.rows.addEventListener('keydown', function(e){
+    if (!state.edit) return;
+    var k = (e.key || '').toLowerCase();
+    if ((e.ctrlKey || e.metaKey) && k === 's') { e.preventDefault(); e.stopPropagation(); saveSide(state.act, false); return; }
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); endEdit(true); return; }
+    if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); splitEditedLine(); return; }
+    if (e.key === 'Tab') { e.preventDefault(); e.stopPropagation(); endEdit(true); return; }
+    e.stopPropagation();          // every other key belongs to the editor, never fire global shortcuts
+  });
+  el.rows.addEventListener('focusout', function(){
+    var ed = state.edit; if (!ed) return;
+    setTimeout(function(){
+      if (state.edit !== ed) return;
+      var a = document.activeElement;
+      if (a && ed.cell.contains(a)) return;
+      endEdit(true);
+    }, 0);
+  });
+  el.rows.addEventListener('mouseover', function(e){
+    if (!dragging || !state.sel) return;
+    var i = rowIndexOf(e.target);
+    if (i < 0) return;
+    var side = sideOf(e.target, i, e.clientX);
+    if (side === state.sel.side && state.sel.focus !== i) setSel(state.sel.side, state.sel.anchor, i);
+  });
+  document.addEventListener('mouseup', function(){ dragging = false; });
+  el.rows.addEventListener('contextmenu', function(e){
+    e.preventDefault();
+    var i = rowIndexOf(e.target);
+    var side = i >= 0 ? sideOf(e.target, i, e.clientX) : state.act;
+    if (i >= 0) {
+      var s = state.sel;
+      var inside = s && s.side === side && i >= Math.min(s.anchor, s.focus) && i <= Math.max(s.anchor, s.focus);
+      if (!inside) setSel(side, i, i);
+    }
+    openCtx(e.clientX, e.clientY, side, i);
+  });
+  document.addEventListener('mousedown', function(e){
+    if (el.ctx.classList.contains('show') && !el.ctx.contains(e.target)) closeCtx();
+  });
+  document.addEventListener('keydown', function(e){
+    if (e.key === 'Escape') {
+      if (el.impMask.classList.contains('show')) { closeImport(); return; }
+      if (el.veil.classList.contains('show')) { el.veil.classList.remove('show'); return; }
+      closeCtx(); return;
+    }
+    var tag = (e.target && e.target.tagName) || '';
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target && e.target.isContentEditable)) return;
+    var mod = e.ctrlKey || e.metaKey;
+    var k = (e.key || '').toLowerCase();
+
+    // Ctrl+S: save the active pane back to its source file (Save As only when there is none)
+    if (mod && k === 's') { e.preventDefault(); saveSide(state.act, false); return; }
+
+    // Editing shortcuts that match Binary Editor
+    if (mod && k === 'a') { if (selAllRows(state.act)) e.preventDefault(); return; }
+    if (mod && k === 'c') { doCopy(); e.preventDefault(); return; }
+    if (mod && k === 'x') { doCut(); e.preventDefault(); return; }
+    if (mod && k === 'v') { doPaste(); e.preventDefault(); return; }
+    if (mod && k === 'z') { if (e.shiftKey) redo(); else undo(); e.preventDefault(); return; }
+    if (mod && k === 'y') { redo(); e.preventDefault(); return; }
+    // Enter / F2: edit the current line in place
+    if ((e.key === 'Enter' || e.key === 'F2') && state.sel && state.rows.length) {
+      e.preventDefault();
+      beginEdit(state.sel.side, state.sel.focus, 'end');
+      return;
+    }
+    if (e.key === 'Tab') {
+      if (!state.a.lines.length && !state.b.lines.length) return;
+      state.act = state.act === 'A' ? 'B' : 'A';
+      updatePaneActive();
+      e.preventDefault(); return;
+    }
+    if (e.key === 'ArrowUp')   { moveSelBy(-1, e.shiftKey); e.preventDefault(); return; }
+    if (e.key === 'ArrowDown') { moveSelBy(1, e.shiftKey);  e.preventDefault(); return; }
+    if (e.key === 'Home')      { moveSelEdge('first', e.shiftKey); e.preventDefault(); return; }
+    if (e.key === 'End')       { moveSelEdge('last', e.shiftKey);  e.preventDefault(); return; }
+    if (e.key === 'PageUp')    { for (var pu = 0; pu < 10; pu++) moveSelBy(-1, true); e.preventDefault(); return; }
+    if (e.key === 'PageDown')  { for (var pd = 0; pd < 10; pd++) moveSelBy(1, true);  e.preventDefault(); return; }
+    if (e.key === 'Delete' || e.key === 'Backspace') {
+      if (state.sel) { doDelete(); e.preventDefault(); }
+      return;
+    }
+
+    // Diff navigation (Text Comparer only: F3 / Shift+F3 or Ctrl+G)
+    if (e.key === 'F3' || (mod && k === 'g')) {
+      e.preventDefault();
+      if (!state.hunks.length) return;
+      var back = e.shiftKey;
+      var n = state.hunks.length;
+      var idx = back ? (state.cur <= 0 ? n - 1 : state.cur - 1) : (state.cur >= n - 1 || state.cur < 0 ? 0 : state.cur + 1);
+      gotoHunk(idx, true);
+    }
+  });
+
+  $('ctxCopy').addEventListener('click', function(){ closeCtx(); doCopy(); });
+  $('ctxCut').addEventListener('click', function(){ closeCtx(); doCut(); });
+  $('ctxPaste').addEventListener('click', function(){ closeCtx(); doPaste(); });
+  $('ctxDelete').addEventListener('click', function(){ closeCtx(); doDelete(); });
+  $('ctxToOther').addEventListener('click', function(){ closeCtx(); toOtherPane(false); });
+  $('ctxMoveToOther').addEventListener('click', function(){ closeCtx(); toOtherPane(true); });
+
+  /* ================= events: toolbar / per-pane buttons ================= */
+  el.btnCompare.addEventListener('click', function(){
+    if (!state.a.lines.length && !state.b.lines.length) { toast(t('needBoth')); return; }
+    /* Comparing is the only place that complains: a Clear / load / undo must never pop an error,
+       so the "one side is empty" verdict lives here, not inside compare() */
+    if (!state.a.lines.length || !state.b.lines.length) { toast(t('needBoth'), 'err'); return; }
+    compare(false);
+    if (state.cur >= 0) { gotoHunk(0, true); toast(fill(t('msgFound'), { n: state.hunks.length }), 'ok'); }
+    /* "Identical" is a verdict too: say it in a toast instead of making people decipher the "A = B" chip */
+    else if (state.a.lines.length && state.b.lines.length) { toast(t('msgAllSame'), 'ok'); }
+  });
+  el.btnPrev.addEventListener('click', function(){
+    if (!state.hunks.length) return;
+    gotoHunk(state.cur <= 0 ? state.hunks.length - 1 : state.cur - 1, true);
+  });
+  el.btnNext.addEventListener('click', function(){
+    if (!state.hunks.length) return;
+    gotoHunk(state.cur < 0 || state.cur >= state.hunks.length - 1 ? 0 : state.cur + 1, true);
+  });
+  el.btnList.addEventListener('click', function(){
+    /* No hunks to list: either the two sides are identical or only one side is loaded — say which */
+    if (!state.hunks.length) { toast(state.oneSide ? t('needBoth') : t('diffSame')); return; }
+    if (el.diffPanel.classList.contains('show')) closeList(); else { openList(); markListRow(); }
+  });
+  // While folded, clicking any blank part of the title bar unfolds (the close button excepted)
+  el.diffPanel.querySelector('.dhead').addEventListener('click', function(e){
+    if (e.target && e.target.closest && e.target.closest('button')) return;
+    if (state.folded) unfoldList();
+  });
+
+  /* Shift + wheel: the column under the pointer scrolls sideways (same feel as the two body panes) */
+  el.diffList.addEventListener('wheel', function(e){
+    if (!e.shiftKey) return;
+    var pv = e.target && e.target.closest ? e.target.closest('.pv') : null;
+    if (!pv) return;
+    var k = pv.classList.contains('a') ? 'a' : 'b';
+    if (!oxMax[k]) return;
+    e.preventDefault();
+    ox[k] = Math.max(0, Math.min(oxMax[k], ox[k] + (e.deltaY || e.deltaX)));
+    applyOx(); paintDiffRails();
+  }, { passive: false });
+
+  /* The list's three column grips: 1 adjusts the range column, 2 the line count, 3 the A / B split;
+     double-click restores the defaults (auto range, count 30, A/B at half each) */
+  function bindColGrip(g, which){
+    if (!g) return;
+    var x0 = 0, r0 = 0, c0 = 0, n0 = 0, wa = 0, wb = 0, tot = 1;
+    function mv(ev){
+      var dx = ev.clientX - x0;
+      if (which === 0) {
+        state.idxW = Math.max(22, Math.min(96, n0 + dx));
+      } else if (which === 1) {
+        state.rangeW = Math.max(80, Math.min(460, r0 + dx));
+      } else if (which === 2) {
+        state.cntW = Math.max(24, Math.min(140, c0 + dx));
+      } else {
+        var a = Math.max(60, Math.min(tot - 60, wa + dx));
+        state.abFrac = a / tot;
+      }
+      applyColWidths();
+      placeColSeps();
+      if (typeof requestAnimationFrame === 'function') requestAnimationFrame(layoutDiff);
+      else layoutDiff();
+    }
+    function up(){
+      document.removeEventListener('mousemove', mv);
+      document.removeEventListener('mouseup', up);
+      g.classList.remove('on');
+      document.body.classList.remove('resizing-col');
+      savePrefs();
+    }
+    g.addEventListener('mousedown', function(e){
+      if (e.button !== 0) return;
+      e.preventDefault(); e.stopPropagation();
+      var head = el.diffList.querySelector('.dcols');
+      var ha = head && head.querySelector('.h-pv.a'), hb = head && head.querySelector('.h-pv.b');
+      if (ha && hb) {
+        wa = ha.getBoundingClientRect().width;
+        wb = hb.getBoundingClientRect().width;
+        tot = Math.max(120, wa + wb);
+      }
+      x0 = e.clientX; r0 = curRangeW(); c0 = curCntW(); n0 = curIdxW();
+      g.classList.add('on');
+      document.body.classList.add('resizing-col');
+      document.addEventListener('mousemove', mv);
+      document.addEventListener('mouseup', up);
+    });
+    g.addEventListener('dblclick', function(e){
+      e.preventDefault(); e.stopPropagation();
+      if (which === 0) state.idxW = 0;
+      else if (which === 1) state.rangeW = 0;
+      else if (which === 2) state.cntW = 0;
+      else state.abFrac = 0.5;
+      applyColWidths(); placeColSeps(); layoutDiff(); savePrefs();
+    });
+  }
+  $('btnSwap').addEventListener('click', function(){
+    endEdit(false);
+    var a = { text: sideText(state.a), name: state.a.name, path: state.a.path, bytes: state.a.bytes, enc: state.a.enc };
+    var b = { text: sideText(state.b), name: state.b.name, path: state.b.path, bytes: state.b.bytes, enc: state.b.enc };
+    loadBoth(b, a);
+  });
+  $('btnDiffClose').addEventListener('click', closeList);
+  el.diffList.addEventListener('click', function(e){
+    var d = e.target.closest ? e.target.closest('.drow') : null;
+    if (!d) return;
+    gotoHunk(+d.dataset.h, true, true);
+    markListRow();
+  });
+
+  el.btnUndo.addEventListener('click', undo);
+  el.btnRedo.addEventListener('click', redo);
+
+  el.optWs.addEventListener('change', function(){ state.opts.ws = el.optWs.checked; savePrefs(); compare(false); });
+  el.optCase.addEventListener('change', function(){ state.opts.case = el.optCase.checked; savePrefs(); compare(false); });
+  el.optBlank.addEventListener('change', function(){ state.opts.blank = el.optBlank.checked; savePrefs(); compare(false); });
+  el.optWrap.addEventListener('change', function(){
+    state.opts.wrap = el.optWrap.checked; savePrefs();
+    el.body.classList.toggle('wrap', state.opts.wrap);
+  });
+
+  function pane(side){
+    return {
+      open: function(){ state.act = side; updatePaneActive(); openImport(side); },
+      save: function(){ state.act = side; saveSide(side, false); },
+      saveAs: function(){ state.act = side; saveSide(side, true); },
+      clear: function(){ clearSide(side); },
+      cut: function(){ state.act = side; doCut(); },
+      copy: function(){ state.act = side; doCopy(); },
+      paste: function(){ state.act = side; doPaste(); },
+      del: function(){ state.act = side; doDelete(); }
+    };
+  }
+  ['A', 'B'].forEach(function(side){
+    var p = pane(side), L = side.toLowerCase();
+    $('open' + side).addEventListener('click', p.open);
+    $('save' + side).addEventListener('click', p.save);
+    $('saveAs' + side).addEventListener('click', p.saveAs);
+    $('clear' + side).addEventListener('click', p.clear);
+    $('cut' + side).addEventListener('click', p.cut);
+    $('copy' + side).addEventListener('click', p.copy);
+    $('paste' + side).addEventListener('click', p.paste);
+    $('del' + side).addEventListener('click', p.del);
+    el['head' + side].addEventListener('mousedown', function(){ state.act = side; updatePaneActive(); });
+    void L;
+  });
+
+  el.btnLang.addEventListener('click', function(){
+    lang = lang === 'zh' ? 'en' : 'zh';
+    applyLang();
+    savePrefs();
+    updateStats();
+    updateHeads();
+    if (state.a.lines.length || state.b.lines.length) compare(false);
+    renderList();
+  });
+
+  el.btnCopy.addEventListener('click', function(){
+    if (!state.hunks.length) { toast(t('msgNoDiff')); return; }
+    vscode.postMessage({ type: 'copy', text: unifiedDiff() });
+    toast(t('msgCopied'));
+  });
+  el.btnSave.addEventListener('click', function(){
+    if (!state.hunks.length) { toast(t('msgNoDiff')); return; }
+    var base = (state.b.name || state.a.name || 'compare').replace(/\.[^.]+$/, '');
+    vscode.postMessage({ type: 'save', text: unifiedDiff(), suggested: base + '.diff' });
+  });
+
+  /* ================= diff list height dragging ================= */
+  (function splitter(){
+    var sp = el.diffSplit, drag = false, startY = 0, startH = 0;
+    sp.addEventListener('mousedown', function(e){
+      drag = true; startY = e.clientY; startH = el.diffPanel.offsetHeight;
+      sp.classList.add('dragging'); document.body.classList.add('resizing'); e.preventDefault();
+    });
+    document.addEventListener('mousemove', function(e){
+      if (!drag) return;
+      var h = Math.max(60, Math.min(window.innerHeight - 240, startH + (startY - e.clientY)));
+      state.listH = h;
+      el.diffPanel.style.height = h + 'px';
+      placeDiffRails();                 // height changed, so re-anchor both horizontal bars to the new bottom
+    });
+    document.addEventListener('mouseup', function(){
+      if (!drag) return;
+      drag = false; sp.classList.remove('dragging'); document.body.classList.remove('resizing');
+      savePrefs();
+    });
+    sp.addEventListener('dblclick', function(){
+      state.listH = 168;
+      el.diffPanel.style.height = state.listH + 'px';
+      placeDiffRails();
+      savePrefs();
+    });
+  })();
+
+  /* ---------- about ---------- */
+  function renderAbout(){
+    $('abDate').textContent = new Date().toISOString().slice(0, 10);
+    $('aboutGrid').innerHTML = ['1', '2', '3', '4'].map(function(i){
+      return '<div class="ab-item"><div class="t">' + esc(t('aboutT' + i)) + '</div>' +
+             '<div class="d">' + esc(t('aboutD' + i)) + '</div></div>';
+    }).join('');
+  }
+  $('btnAbout').addEventListener('click', function(){ renderAbout(); el.veil.classList.add('show'); });
+  $('btnImport').addEventListener('click', function(){ openImport(state.act); });
+  $('btnImportEmpty').addEventListener('click', function(){ openImport('A'); });
+  $('btnAboutClose').addEventListener('click', function(){ el.veil.classList.remove('show'); });
+  el.veil.addEventListener('click', function(e){ if (e.target === el.veil) el.veil.classList.remove('show'); });
+
+  /* ---------- import dialog: two independent A / B boxes (file / paste / drop) ---------- */
+  // Source file picked but not imported yet, per box; empty means "use the text in the box"
+  var impPend = { A: null, B: null };
+  function impBox(p){
+    return p === 'B'
+      ? { ta: $('impTextB'), tag: $('impTagB'), err: $('impErrB'), col: $('impColB'), len: $('impLenB') }
+      : { ta: $('impTextA'), tag: $('impTagA'), err: $('impErrA'), col: $('impColA'), len: $('impLenA') };
+  }
+  function lineCount(text){
+    if (!text) return 0;
+    var s = String(text).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    if (/\n$/.test(s)) s = s.slice(0, -1);
+    return s ? s.split('\n').length : 0;
+  }
+  function updateImpLen(){
+    ['A', 'B'].forEach(function(p){
+      var b = impBox(p), n = lineCount(b.ta.value);
+      b.len.textContent = n ? fill(t(n === 1 ? 'stLine' : 'stLines'), { n: n }) : '';
+    });
+  }
+  function setImpPend(p, file){
+    impPend[p] = file;
+    var b = impBox(p);
+    if (file) {
+      b.tag.textContent = fill(t('impFileTag'), { n: file.name, b: fmtBytesShort(file.bytes) });
+      b.tag.classList.add('show');
+    } else {
+      b.tag.textContent = '';
+      b.tag.classList.remove('show');
+    }
+  }
+  function clearImpPend(p){ setImpPend(p, null); }
+  function openImport(target){
+    ['A', 'B'].forEach(function(p){ clearImpPend(p); impBox(p).err.textContent = ''; impBox(p).ta.value = ''; });
+    updateImpLen();
+    el.impMask.classList.add('show');
+    var b = impBox(target === 'B' ? 'B' : 'A');
+    setTimeout(function(){ b.ta.focus(); if (b.ta.select) b.ta.select(); }, 40);
+  }
+  function closeImport(){
+    el.impMask.classList.remove('show');
+    ['A', 'B'].forEach(function(p){
+      clearImpPend(p);
+      impBox(p).ta.value = '';
+      impBox(p).err.textContent = '';
+      impBox(p).col.classList.remove('over');
+    });
+    updateImpLen();
+  }
+  // Put a file (or clipboard text) into a box: the text goes to the textarea, the source onto the tag
+  function fillImp(p, msg){
+    var b = impBox(p);
+    var text = String(msg.text == null ? '' : msg.text);
+    b.ta.value = text;
+    b.err.textContent = '';
+    setImpPend(p, {
+      name: String(msg.name || (p === 'A' ? 'pasted.txt' : 'pasted(B).txt')),
+      path: String(msg.path || ''),
+      enc: String(msg.enc || 'UTF-8'),
+      bytes: msg.bytes != null ? +msg.bytes : new Blob([text]).size
+    });
+    updateImpLen();
+  }
+  // Empty text plus no source leaves this box alone (its pane untouched); -1 means an error (red message already set)
+  function importTo(p){
+    var b = impBox(p), src = impPend[p];
+    b.err.textContent = '';
+    var text = b.ta.value;
+    if (!text.trim() && !src) return 0;
+    if (!text.length) { b.err.textContent = t('msgEmptyBox'); return -1; }
+    putSide(p, {
+      text: text,
+      name: src ? src.name : (p === 'A' ? 'pasted.txt' : 'pasted(B).txt'),
+      path: src ? src.path : '',
+      enc: src ? src.enc : 'UTF-8',
+      bytes: new Blob([text]).size
+    });
+    return lineCount(text);
+  }
+  function applyImport(p){
+    var n = importTo(p);
+    if (n < 0) return false;
+    if (!n) { impBox(p).err.textContent = t('msgEmptyBox'); return false; }
+    compare(true);
+    toast(fill(t('msgImpOne'), { p: p, n: n }), 'ok');
+    return true;
+  }
+  ['A', 'B'].forEach(function(p){
+    $('impPick' + p).addEventListener('click', function(){
+      vscode.postMessage({ type: 'pickFile', pane: p, dialog: true });
+    });
+    $('impClip' + p).addEventListener('click', function(){
+      vscode.postMessage({ type: 'clipboardRead', pane: p, purpose: 'import' });
+    });
+    $('impApply' + p).addEventListener('click', function(){
+      if (applyImport(p)) closeImport();
+    });
+    $('impText' + p).addEventListener('input', function(){
+      if (impPend[p]) clearImpPend(p);     // editing the text by hand abandons the file picked earlier
+      impBox(p).err.textContent = '';
+      updateImpLen();
+    });
+    // The dialog's textarea swallows its own keys so the global shortcuts below never fire
+    $('impText' + p).addEventListener('keydown', function(e){ e.stopPropagation(); });
+    $('impTag' + p).addEventListener('click', function(){ clearImpPend(p); updateImpLen(); });
+    var col = $('impCol' + p);
+    col.addEventListener('dragover', function(e){ col.classList.add('over'); });
+    col.addEventListener('dragleave', function(){ col.classList.remove('over'); });
+    col.addEventListener('drop', function(){ col.classList.remove('over'); });
+  });
+  $('impBoth').addEventListener('click', function(){
+    var a = importTo('A'), b = importTo('B');
+    if (a < 0 || b < 0) return;              // on error stay in the dialog so the red message stays visible
+    if (!a && !b) { toast(t('msgImpNone'), 'err'); return; }
+    compare(true);
+    closeImport();
+    toast(fill(t('msgImpSum'), { a: a || 0, b: b || 0 }), 'ok');
+  });
+  $('impClose').addEventListener('click', closeImport);
+  el.impMask.addEventListener('click', function(e){ if (e.target === el.impMask) closeImport(); });
+
+  /* ---------- drag & drop: VS Code explorer / OS files ---------- */
+  /* dataTransfer is locked during a drag (files is empty, types may be just "Files"), so dragenter /
+     dragover always preventDefault to claim the drop and the content is inspected on drop.
+     Content can come from four sources, tried in order of reliability:
+       1) a path in uri-list / text/plain -> handed to the host, which returns a path Save can write back to
+       2) File.path set (Electron files dragged from the OS explorer) -> also handed to the host
+       3) a readable File object -> decoded in the panel, following the BOM
+       4) name only, no content -> have the host search the project by file name + size */
+  function collectUris(dt){
+    var out = [];
+    var looksPath = function(v){
+      return /^(file:|vscode-file:|vscode-remote:|[a-zA-Z]:[\\/]|\/|\\\\)/.test(String(v || '').trim());
+    };
+    var push = function(v){ var t = String(v || '').trim(); if (t && t !== 'undefined' && !/^#/.test(t)) out.push(t); };
+    // One URI per line, but it can also be JSON (VS Code's application/vnd.code.uri-list is a JSON array)
+    var add = function(raw){
+      var s = String(raw || '').trim();
+      if (!s) return;
+      if (s.charAt(0) === '[' || s.charAt(0) === '{') {
+        var got = 0;
+        try {
+          var walk = function(v){
+            if (!v) return;
+            if (typeof v === 'string') { if (looksPath(v)) { push(v); got++; } return; }
+            if (Array.isArray(v)) { v.forEach(walk); return; }
+            if (typeof v === 'object') { ['fsPath', 'path', 'external', 'uri', 'resource'].forEach(function(k){ if (v[k]) walk(v[k]); }); }
+          };
+          walk(JSON.parse(s));
+        } catch (_) {}
+        if (got) return;
+        // not valid JSON: fish the paths out with a regex
+        var m, re = /"(?:fsPath|path|external)"\s*:\s*"([^"]+)"/g;
+        while ((m = re.exec(s))) { push(m[1].replace(/\\\\/g, '\\')); got++; }
+        if (got) return;
+      }
+      s.split(/\r?\n/).forEach(function(x){
+        x = x.trim();
+        if (/^[\[{]/.test(x)) return;
+        if (looksPath(x)) push(x);
+      });
+    };
+    var types = [];
+    try { types = Array.prototype.map.call((dt && dt.types) || [], function(x){ return String(x); }); } catch (_) {}
+    // Read the known MIME types first, then every custom one as well (VS Code has renamed them a few times)
+    var known = ['text/uri-list', 'application/vnd.code.uri-list', 'resourceURLs', 'codefiles', 'text/plain'];
+    var all = known.concat(types.filter(function(t){ return known.indexOf(t) < 0; }));
+    for (var i = 0; i < all.length; i++) {
+      try { var v = dt.getData(all[i]); if (v) add(v); } catch (_) {}
+      if (out.length) break;
+    }
+    return Array.from(new Set(out));
+  }
+  function dropFiles(dt){
+    var out = [];
+    try { out = Array.prototype.slice.call((dt && dt.files) || []); } catch (_) { out = []; }
+    if (!out.length && dt && dt.items) {
+      try {
+        Array.prototype.forEach.call(dt.items, function(it){
+          if (it.kind === 'file' && it.getAsFile) { var f = it.getAsFile(); if (f) out.push(f); }
+        });
+      } catch (_) {}
+    }
+    return out;
+  }
+  function dropTypes(dt){
+    try { return Array.prototype.map.call((dt && dt.types) || [], String).join(', '); } catch (_) { return ''; }
+  }
+  /* Decode inside the panel (used when the File object has no path); BOM rules match the host */
+  function decodeDropped(buf){
+    var u8 = new Uint8Array(buf);
+    try {
+      if (u8.length >= 2 && u8[0] === 0xFF && u8[1] === 0xFE) {
+        return { text: new TextDecoder('utf-16le').decode(u8.subarray(2)), enc: 'UTF-16LE' };
+      }
+      if (u8.length >= 2 && u8[0] === 0xFE && u8[1] === 0xFF) {
+        return { text: new TextDecoder('utf-16be').decode(u8.subarray(2)), enc: 'UTF-16BE' };
+      }
+    } catch (_) {}
+    var text = new TextDecoder('utf-8').decode(u8);
+    if (text.charCodeAt(0) === 0xFEFF) return { text: text.slice(1), enc: 'UTF-8-BOM' };
+    return { text: text, enc: 'UTF-8' };
+  }
+  /* Where a single dropped file goes. The empty pane wins, but a file that is already on one
+     side is never cloned onto the other one: dropping UsbBtHci.c next to itself only ever
+     produced a diff of a file against itself. */
+  function paneFor(altKey, path){
+    var p = String(path || '').toLowerCase();
+    var sameA = !!p && String(state.a.path || '').toLowerCase() === p;
+    var sameB = !!p && String(state.b.path || '').toLowerCase() === p;
+    if (sameA) return 'A';
+    if (sameB) return 'B';
+    if (altKey) return 'B';
+    if (!state.a.lines.length) return 'A';
+    if (!state.b.lines.length) return 'B';
+    return 'B';                       // both sides busy: the new file replaces the right-hand side
+  }
+  /* Dropped content is decoded -> decide where it goes: a box in the dialog / one pane / both panes */
+  function applyDropped(items, boxSide, altKey){
+    if (!items.length) return;
+    // The content came out of a File object (no path) -> have the host recover the source path by name + size,
+    // so Save can write back to the original file just like Open
+    function askPath(it, pane, box){
+      if (!it || it.path || !it.name) return;
+      vscode.postMessage({ type: 'resolvePath', name: it.name, bytes: it.bytes || 0, pane: pane, dialog: box || '' });
+    }
+    if (boxSide) {
+      fillImp(boxSide, items[0]);
+      updateImpLen();
+      askPath(items[0], boxSide, boxSide);
+      toast(fill(t('msgDropBox'), { n: items[0].name || '', p: boxSide }));
+      return;
+    }
+    if (items.length >= 2) {
+      loadBoth(items[0], items[1]);
+      askPath(items[0], 'A');
+      askPath(items[1], 'B');
+      toast(fill(t('msgDropFiles'), { n: 2 }), 'ok');
+      return;
+    }
+    var one = paneFor(altKey, items[0] && items[0].path);
+    setSide(one, items[0]);
+    askPath(items[0], one);
+    toast(fill(t('msgDropFiles'), { n: 1 }), 'ok');
+  }
+  function dropByContent(files, boxSide, altKey, dtTypes){
+    var use = files.slice(0, 2);
+    Promise.all(use.map(function(f){
+      if (!f || !f.arrayBuffer) return Promise.resolve(null);
+      return f.arrayBuffer().then(function(buf){
+        if (!buf || !buf.byteLength) return null;
+        var d = decodeDropped(buf);
+        return { name: f.name || 'dropped.txt', text: d.text, enc: d.enc, bytes: buf.byteLength, path: '' };
+      }).catch(function(){ return null; });
+    })).then(function(items){
+      var ok = items.filter(function(x){ return x && x.text !== ''; });
+      if (ok.length) { applyDropped(ok, boxSide, altKey); return; }
+      // Name only, no content (the usual case when dropping from the VS Code Explorer) -> have the host find the real file by name
+      var names = use.map(function(f){ return f.name || ''; }).filter(Boolean);
+      if (names.length) {
+        vscode.postMessage({
+          type: 'locateByName',
+          names: names,
+          sizes: use.map(function(f){ return f.size || 0; }),
+          pane: paneFor(altKey),
+          dialog: boxSide || '',
+        });
+        return;
+      }
+      toast(fill(t('msgDropNone'), { t: dtTypes || '—' }), 'err');
+    });
+  }
+  var dragDepth = 0;
+  function impSideOf(node){
+    if (!el.impMask.classList.contains('show') || !node || !node.closest) return null;
+    var col = node.closest('.impCol');
+    if (!col) return null;
+    return col.classList.contains('b') ? 'B' : 'A';
+  }
+  document.addEventListener('dragenter', function(e){
+    e.preventDefault(); e.stopPropagation();
+    dragDepth++;
+    if (!impSideOf(e.target)) el.dropHint.classList.add('show');
+  }, true);
+  document.addEventListener('dragover', function(e){
+    e.preventDefault(); e.stopPropagation();
+    try { e.dataTransfer.dropEffect = 'copy'; } catch (_) {}
+  }, true);
+  document.addEventListener('dragleave', function(e){
+    e.stopPropagation();
+    if (--dragDepth <= 0) { dragDepth = 0; el.dropHint.classList.remove('show'); }
+  }, true);
+  document.addEventListener('drop', function(e){
+    e.preventDefault(); e.stopPropagation();
+    dragDepth = 0; el.dropHint.classList.remove('show');
+
+    var dt = e.dataTransfer;
+    var boxSide = impSideOf(e.target);      // Dropped onto a box of the import dialog -> feed that box only
+    var uris = collectUris(dt);
+    var files = dropFiles(dt);
+
+    // (1) / (2) have a path (uri-list, bare path, File.path) -> the host reads it and can return the path
+    var paths = [];
+    files.forEach(function(f){ if (f && f.path) paths.push(f.path); });
+    var list = (uris.length ? uris : paths).slice(0, 2);
+    if (list.length) {
+      vscode.postMessage({ type: 'readUris', uris: list, pane: paneFor(e.altKey, list[0]), dialog: boxSide || '', alt: !!e.altKey });
+      return;
+    }
+    // (3) / (4) only have a File object: try decoding here first, then let the host look it up by name
+    if (files.length) { dropByContent(files, boxSide, e.altKey, dropTypes(dt)); return; }
+
+    var txt = '';
+    try { txt = dt.getData('text/plain') || ''; } catch (_) {}
+    txt = String(txt || '').trim();
+    // Explorer sometimes gives a bare file name with no directory: have the host search the project by name + extension
+    if (txt && !/[\r\n]/.test(txt) && /^[^\\\/:*?"<>|]+\.\w{1,8}$/.test(txt)) {
+      vscode.postMessage({
+        type: 'locateByName', names: [txt], sizes: [0],
+        pane: paneFor(e.altKey), dialog: boxSide || '',
+      });
+      return;
+    }
+    // Plain text dragged in from another editor
+    if (txt) {
+      var one = { name: boxSide ? 'dropped.txt' : 'Dropped text', text: txt, enc: 'UTF-8', bytes: txt.length, path: '' };
+      applyDropped([one], boxSide, e.altKey);
+      return;
+    }
+    toast(fill(t('msgDropNone'), { t: (dropTypes(dt) || 'none') + ' · ' + files.length + ' file(s)' }), 'err');
+  }, true);
+
+  /* ---------- host messages ---------- */
+  window.addEventListener('message', function(ev){
+    var m = ev.data; if (!m || !m.type) return;
+    switch (m.type) {
+      case 'load':
+        if (m.dialog) { fillImp(m.pane === 'B' ? 'B' : 'A', m); break; }
+        setSide(m.pane === 'B' ? 'B' : 'A', m); break;
+      case 'loadBoth':
+        if (m.dialog) { fillImp('A', m.a); fillImp('B', m.b); break; }
+        loadBoth(m.a, m.b); break;
+      case 'clipboard':
+        if (m.purpose === 'paste') { applyPaste(m.text); break; }
+        if (m.purpose === 'import') {
+          var cp = m.pane === 'B' ? 'B' : 'A';
+          if (m.text == null || m.text === '') { toast(t('msgClipEmpty'), 'err'); break; }
+          fillImp(cp, { text: m.text, name: cp === 'A' ? 'clipboard.txt' : 'clipboard(B).txt' });
+          toast(fill(t('msgClipIn'), { p: cp }), 'ok');
+          break;
+        }
+        if (m.text == null || m.text === '') { toast(t('msgClipEmpty')); break; }
+        setSide(m.pane === 'B' ? 'B' : 'A', { text: m.text, name: m.name || '' });
+        break;
+      case 'saved':     toast(fill(t('msgSaved'), { p: m.path || '' }), 'ok'); break;
+      case 'savedPane': {
+        var s = m.pane === 'B' ? state.b : state.a;
+        s.path = String(m.path || '');
+        s.name = String(m.name || s.name);
+        s.dirty = false;
+        updateHeads();
+        toast(fill(t('msgSavedPane'), { p: s.name }), 'ok');
+        break;
+      }
+      case 'saveFail':  toast(fill(t('msgSaveFail'), { e: m.error || '' }), 'err'); break;
+      case 'needPath': {
+        // The host searched the workspace and recent directories (and asked once) without a match:
+        // just say so, no forced Save As - interrupting is worse than letting the user click it
+        toast(t('msgNoSrc'), 'err');
+        break;
+      }
+      case 'pathOf': {
+        // The dropped file had content but no path; the host recovered it by name, so Save can write back
+        var nm = String(m.name || '');
+        if (m.dialog) {
+          var pend = impPend[m.dialog === 'B' ? 'B' : 'A'];
+          if (pend && !pend.path && (!nm || pend.name === nm)) pend.path = String(m.path || '');
+          break;
+        }
+        var sp = m.pane === 'B' ? state.b : state.a;
+        if (m.path && !sp.path && (!nm || sp.name === nm)) { sp.path = String(m.path); updateHeads(); }
+        break;
+      }
+      case 'error':     toast(/drop/i.test(String(m.message || ''))
+                          ? fill(t('msgDropNone'), { t: '—' })
+                          : fill(t('msgReadFail'), { e: m.message || '' }), 'err'); break;
+      case 'init':      if (m.a && m.b) loadBoth(m.a, m.b); break;
+    }
+  });
+
+  /* ---------- language / preferences ---------- */
+  function applyLang(){
+    document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
+    el.btnLang.textContent = lang === 'zh' ? 'EN' : '中文';
+    Array.prototype.forEach.call(document.querySelectorAll('[data-i18n]'), function(n){
+      n.textContent = t(n.getAttribute('data-i18n'));
+    });
+    Array.prototype.forEach.call(document.querySelectorAll('[data-i18n-title]'), function(n){
+      n.title = t(n.getAttribute('data-i18n-title'));
+    });
+    Array.prototype.forEach.call(document.querySelectorAll('[data-i18n-html]'), function(n){
+      n.innerHTML = t(n.getAttribute('data-i18n-html'));
+    });
+    Array.prototype.forEach.call(document.querySelectorAll('[data-i18n-ph]'), function(n){
+      n.placeholder = t(n.getAttribute('data-i18n-ph'));
+    });
+    if (el.grip1) {
+      if (el.grip0) el.grip0.title = t('colIdxTip');
+      el.grip1.title = t('colGripTip');
+      el.grip2.title = t('colCntTip');
+      el.grip3.title = t('colSplitTip');
+    }
+    syncFoldBtn();
+    updateHeads();
+    updateStatus();                 // the status bar's "Line 18" / "Lines 18–20 (3)" must be recomputed in the new language
+    // The list header labels (range / line count) are composed strings, so repaint them on language change
+    if (state.hunks && state.hunks.length) renderList();
+  }
+  /* Latest two-pane snapshot, also stashed in the webview's own state so the serializer can restore it */
+  var lastSnap = null;
+  /* A page that starts empty must not report "empty" to the host: that wipes the snapshot the fresh
+     open is about to restore from. Only a page that really had text and then lost it clears it. */
+  var tcHadContent = false;
+  /* Fallback copy: if the state does not make it into a rebuilt webview, this one can still be recovered */
+  var SNAP_KEY = 'biosBuddy.tcSnap';
+  /* Snapshot format version: copies written before this build carry no version and are dropped on
+     sight, so a pair the user cleared before the upgrade does not come back after Reload Window. */
+  var SNAP_V = 2;
+  function snapOk(v){ return !!v && v.v === SNAP_V; }
+  function savePrefs(){
+    vscode.setState({ lang: lang, ws: state.opts.ws, case: state.opts.case, blank: state.opts.blank,
+      wrap: state.opts.wrap, listH: state.listH, listOpen: state.listOpen,
+      folded: state.folded, rangeW: state.rangeW, cntW: state.cntW, idxW: state.idxW, abFrac: state.abFrac,
+      snap: lastSnap });
+  }
+
+  /* ---------- state snapshot (safety net for Split Editor / moving a tab to another group) ----------
+     A rebuilt webview is a fresh page, so both panes are gone. Every content change reports the two
+     panes (name / path / text / encoding) to the host, which pushes them back on ready - looking seamless. */
+  var snapT = 0;
+  function oneSnap(s){
+    if (!s.lines.length && !s.name) return null;
+    var text = sideText(s);
+    return {
+      name: s.name || '', path: s.path || '', enc: s.enc || 'UTF-8',
+      bytes: text.length ? new Blob([text]).size : (+s.bytes || 0),
+      text: text
+    };
+  }
+  window.__tcSnap = function(immediate){
+    clearTimeout(snapT);
+    var empty = !state.a.lines.length && !state.b.lines.length;
+    if (immediate || empty) { snapNow(); return; }
+    snapT = setTimeout(snapNow, 600);
+  };
+  function snapNow(){
+      try{
+        if ((+state.a.bytes || 0) + (+state.b.bytes || 0) > 8 * 1024 * 1024) return;   // too large to shuttle around
+        var a = oneSnap(state.a), b = oneSnap(state.b);
+        if (!a && !b) {
+          /* Both sides cleared on purpose: forget the saved pair, otherwise reopening the tool
+             pushes the old content back and the clear looks like it never happened. */
+          if (tcHadContent) {
+            tcHadContent = false;
+            lastSnap = null;
+            vscode.postMessage({ type: 'snapshot', a: null, b: null });
+            try{ localStorage.removeItem(SNAP_KEY); }catch(e){}
+            savePrefs();
+          }
+          return;
+        }
+        tcHadContent = true;
+        vscode.postMessage({ type: 'snapshot', a: a, b: b });
+        // Keep a copy in both places:
+        //   1) webview state - Split Editor / dragging a tab elsewhere carries it into the new instance;
+        //   2) localStorage - if the new instance never receives that state, webviews in one window share an origin.
+        // Very large snapshots are skipped: pushing every edit through IPC slows the UI down.
+        var sz = (a ? a.text.length : 0) + (b ? b.text.length : 0);
+        lastSnap = sz > 8 * 1024 * 1024 ? null : { v: SNAP_V, a: a, b: b };
+        savePrefs();
+        try{
+          if (lastSnap && sz <= 3 * 1024 * 1024) localStorage.setItem(SNAP_KEY, JSON.stringify(lastSnap));
+          else localStorage.removeItem(SNAP_KEY);
+        }catch(e){ /* quota exhausted, fine - the state path still works */ }
+      }catch(e){ /* a failed snapshot breaks nothing */ }
+  };
+
+  /* ---------- startup ---------- */
+  el.optWs.checked = state.opts.ws;
+  el.optCase.checked = state.opts.case;
+  el.optBlank.checked = state.opts.blank;
+  el.optWrap.checked = state.opts.wrap;
+  el.body.classList.toggle('wrap', state.opts.wrap);
+  applyLang();
+  applyColWidths();
+  applyPaneRatio();
+  placeChrome();
+  window.addEventListener('resize', function(){ applyPaneRatio(); layoutDiff(); });
+  if (state.folded && state.listOpen) el.diffPanel.classList.add('folded');
+  syncFoldBtn();
+  updateStats();
+  updateHeads();
+  renderList();
+
+  /* ---------- self-restore after Split Editor / moving a tab to another group ----------
+     VS Code builds a completely new webview from the same html, and the host may not be quick enough
+     to send the content back (it may never even hear about it), so it restores itself first:
+       1) webview state - on rebuild VS Code hands back whatever setState stored;
+       2) localStorage - if that never arrives, this copy is still here.
+     When it succeeds, mark ready with restored so the host does not push files in again. */
+  var booted = false;
+  try{
+    var bs = snapOk(saved.snap) ? saved.snap : null;
+    if (!bs) {
+      var ls = null;
+      try{ ls = JSON.parse(localStorage.getItem(SNAP_KEY) || 'null'); }catch(e2){ ls = null; }
+      if (snapOk(ls)) bs = ls;
+      else if (ls) { try{ localStorage.removeItem(SNAP_KEY); }catch(e2){} }   // Older build: drop it
+    }
+    if (bs && (bs.a || bs.b)) {
+      lastSnap = bs;
+      loadBoth(bs.a || null, bs.b || null, true);
+      booted = true;
+    }
+  }catch(e){ booted = false; }
+
+  /* Nothing to restore on our own: ask the host for the last snapshot of this tool.
+     "Split editor" can hand a brand new webview to us with no state at all, and the
+     host still holds the two panes it was showing a moment ago. */
+  if (!booted) { try{ vscode.postMessage({ type: 'needSnap' }); }catch(e){ } }
+
+  savePrefs();
+  vscode.postMessage({ type: 'ready', restored: booted });
+})();
+</script>
+</body>
+</html>

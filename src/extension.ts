@@ -2,6 +2,32 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
+import { registerBinaryEditor, openBinaryEditor } from './binaryEditor';
+import { registerGuidTool } from './guidTool';
+import { registerSerialConsole } from './serialPort';
+import { registerTextCompare } from './textCompare';
+import {
+    svnUpdate, svnClean, gitUpdate, gitResetClean,
+    vcsRootFor, runStepsInTerminal,
+} from './vcsOps';
+import {
+    VcsAction, VcsTool,
+    defaultActions, normalizeActions, findAction, isModified, withSteps,
+    makeCustomId, splitSteps, joinSteps, expandStep, presetIds,
+    visibleActions, hiddenActions, removeAction, restoreAction, insertPreset,
+} from './vcsActions';
+import {
+    BuildTarget, PRESET_BUILD_ID,
+    defaultBuilds, normalizeBuilds, findBuild, visibleBuilds, hiddenBuilds,
+    removeBuild, restoreBuild, makeBuildId, scriptStem, displayLabel,
+} from './buildTargets';
+import {
+    readJsonFile, writeJsonFile, pickOwned, snapshotTree, restoreMissingFiles, restoreOwnedSettings,
+} from './settingsGuard';
+
+// Keep the context around: the guard needs globalStorageUri from anywhere
+let extCtx: vscode.ExtensionContext | undefined;
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -24,8 +50,12 @@ interface FieldChange {
 type ElementKind =
     | { kind: 'root' }
     | { kind: 'group'; id: string }
-    | { kind: 'info'; label: string; desc?: string; tooltip?: string; filePath?: string; line?: number; cfgKey?: string; dndId?: string; dndGroup?: string; icon?: string; commandId?: 'configureDefFile' | 'configureBuildBat' }
-    | { kind: 'action'; id: 'incBuild' | 'testBuild' | 'buildOnly' | 'svnUpdate' | 'svnCleanRevert'; dndGroup?: string };
+    | { kind: 'info'; label: string; desc?: string; tooltip?: string; filePath?: string; line?: number; cfgKey?: string; dndId?: string; dndGroup?: string; icon?: string; tint?: 'warning' | 'error' }
+    | { kind: 'action'; id: 'incBuild' | 'testBuild' | 'binEdit' | 'serialTool' | 'txtCmp' | 'guidTool'; dndGroup?: string }
+    | { kind: 'build'; target: BuildTarget; dndGroup?: string }
+    | { kind: 'buildHidden'; target: BuildTarget }
+    | { kind: 'vcs'; tool: VcsTool; action: VcsAction; dndGroup?: string }
+    | { kind: 'vcsHidden'; tool: VcsTool; action: VcsAction };
 
 // One row under "BIOS Current Info": display label + Config field key.
 // Labels always mirror the raw token names from BiosVersion.def.
@@ -76,6 +106,97 @@ function workspaceSettingsPath(): string | undefined {
     return root ? path.join(root, '.vscode', 'settings.json') : undefined;
 }
 
+// ---------------------------------------------------------------------------
+// Settings guard — Clean treats .vscode/settings.json as an untracked file and deletes it
+// ---------------------------------------------------------------------------
+
+/** One folder per workspace inside the extension's global storage: follows the machine, never the repo */
+function guardDir(): string | undefined {
+    const gs = extCtx?.globalStorageUri?.fsPath;
+    const ws = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (!gs || !ws) return undefined;
+    let h = 0;
+    for (let i = 0; i < ws.length; i++) h = (h * 31 + ws.charCodeAt(i)) | 0;
+    const tag = `${path.basename(ws).replace(/[^\w.-]+/g, '_')}-${Math.abs(h).toString(36)}`;
+    return path.join(gs, 'workspace-guard', tag);
+}
+
+function settingsMirrorPath(): string | undefined {
+    const g = guardDir();
+    return g ? path.join(g, 'settings-mirror.json') : undefined;
+}
+
+function vscodeSnapshotDir(): string | undefined {
+    const g = guardDir();
+    return g ? path.join(g, 'dot-vscode') : undefined;
+}
+
+/** Mirror this extension's workspace settings into global storage */
+function mirrorOwnedSettings(): void {
+    const src = workspaceSettingsPath();
+    const dest = settingsMirrorPath();
+    if (!src || !dest) return;
+    try {
+        const own = pickOwned(readJsonFile(src));
+        if (Object.keys(own).length) writeJsonFile(dest, own);
+    } catch { /* A broken mirror must not break the main flow */ }
+}
+
+/** Restore workspace settings from the mirror when the whole block was deleted; returns the keys put back */
+function restoreOwnedFromMirror(): string[] {
+    const src = workspaceSettingsPath();
+    const mirror = settingsMirrorPath();
+    if (!src || !mirror) return [];
+    return restoreOwnedSettings(src, mirror);
+}
+
+/** Before a Clean: snapshot the whole .vscode folder */
+function snapshotDotVscode(): string[] {
+    const ws = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    const dest = vscodeSnapshotDir();
+    if (!ws || !dest) return [];
+    const src = path.join(ws, '.vscode');
+    if (!fs.existsSync(src)) return [];
+    return snapshotTree(src, dest);
+}
+
+let guardTimer: ReturnType<typeof setInterval> | undefined;
+
+/**
+ * After a destructive Clean-style command: re-create the files missing from .vscode
+ * on a timer. The command runs in a terminal and the extension cannot tell when it
+ * ends, so we restore on every tick of a short window — svn deletes, the next tick
+ * puts it back — and stop by ourselves once the window is over.
+ */
+function watchDotVscode(): void {
+    if (guardTimer) clearInterval(guardTimer);
+    const started = Date.now();
+    let told = false;
+    guardTimer = setInterval(() => {
+        const ws = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        const snap = vscodeSnapshotDir();
+        if (ws && snap) {
+            const back = restoreMissingFiles(snap, path.join(ws, '.vscode'));
+            const keys = restoreOwnedFromMirror();
+            if (back.length || keys.length) {
+                refreshPanel();
+                if (!told) {
+                    told = true;
+                    vscode.window.setStatusBarMessage(
+                        `BIOS Buddy: restored ${Math.max(back.length, keys.length)} file(s) in .vscode that Clean removed`,
+                        8000,
+                    );
+                }
+            }
+        }
+        if (Date.now() - started > 3 * 60 * 1000) {
+            clearInterval(guardTimer!);
+            guardTimer = undefined;
+        }
+    }, 1200);
+    (guardTimer as unknown as { unref?: () => void }).unref?.();
+}
+
 function readWorkspaceSettings(): Record<string, unknown> {
     const p = workspaceSettingsPath();
     if (!p || !fs.existsSync(p)) return {};
@@ -102,10 +223,11 @@ function writeWorkspaceSetting(key: string, value: unknown): boolean {
         }
         settings[key] = value;
         fs.writeFileSync(p, JSON.stringify(settings, null, 4) + '\n', 'utf-8');
+        mirrorOwnedSettings();
         return true;
     } catch (e) {
         vscode.window.showErrorMessage(
-            `BIOS Build Assistant: cannot write ${p}: ${(e as Error).message}`,
+            `BIOS Buddy: cannot write ${p}: ${(e as Error).message}`,
         );
         return false;
     }
@@ -113,7 +235,7 @@ function writeWorkspaceSetting(key: string, value: unknown): boolean {
 
 function readWorkspaceValue<T>(cfg: vscode.WorkspaceConfiguration, leaf: string): unknown {
     // File always wins: it is what the user sees and it survives host caches.
-    const fromFile = readWorkspaceSettings()[`biosBuildAssistant.${leaf}`];
+    const fromFile = readWorkspaceSettings()[`biosBuddy.${leaf}`];
     if (fromFile !== undefined) return fromFile;
     const ins = cfg.inspect<T>(leaf);
     return ins?.workspaceFolderValue ?? ins?.workspaceValue ?? ins?.globalValue;
@@ -197,45 +319,231 @@ async function pickFieldsForBuild(
     }
 
     const chosen = new Set(selected.map(item => item.label));
-    writeWorkspaceSetting(`biosBuildAssistant.${mode}`, Array.from(chosen));
+    writeWorkspaceSetting(`biosBuddy.${mode}`, Array.from(chosen));
     return chosen;
 }
 
 // Drag-and-drop ordering for the non-field groups. Each entry is a stable item
 // id; the panel renders in this order, unknown/new ids append at the end.
-type OrderGroup = 'paths' | 'actions' | 'svnops';
+// Build rows (build.only / build.custom.N) live in the same 'actions' list.
+type OrderGroup = 'actions' | 'svnops' | 'gitops' | 'tools';
 const DEFAULT_ITEM_ORDER: Record<OrderGroup, string[]> = {
-    paths:   ['defFile', 'buildBat'],
-    actions: ['incBuild', 'testBuild', 'buildOnly'],
+    actions: ['incBuild', 'testBuild', PRESET_BUILD_ID],
     svnops:  ['svnUpdate', 'svnCleanRevert'],
+    gitops:  ['gitUpdate', 'gitResetClean'],
+    tools:   ['guidTool', 'serialTool', 'txtCmp', 'binEdit'],
 };
 
 function getItemOrder(cfg: vscode.WorkspaceConfiguration): Record<OrderGroup, string[]> {
     const v = (readWorkspaceValue(cfg, 'itemOrder') ?? {}) as Partial<Record<OrderGroup, string[]>>;
+    // Always hand out a copy: callers push and splice, and returning the module constant would dirty it
+    const pick = (key: OrderGroup, raw: unknown): string[] =>
+        Array.isArray(raw) && raw.length ? [...raw as string[]] : [...DEFAULT_ITEM_ORDER[key]];
+    const tools0 = pick('tools', v.tools);
+    // Every tools order older versions could have stored: the three older tools in any order,
+    // with GUID Assistant appended at the end once it was registered. Matching one of those
+    // means the list was never dragged, so it gets the current default (GUID Assistant first)
+    // instead of staying frozen with GUID Assistant last.
+    const LEGACY_TOOLS = (() => {
+        const base = ['serialTool', 'binEdit', 'txtCmp'];
+        const out = new Set<string>();
+        const perm = (rest: string[], cur: string[]): void => {
+            if (!rest.length) {
+                out.add(cur.join(','));
+                out.add([...cur, 'guidTool'].join(','));
+                return;
+            }
+            rest.forEach((x, i) => perm([...rest.slice(0, i), ...rest.slice(i + 1)], [...cur, x]));
+        };
+        perm(base, []);
+        return out;
+    })();
+    const tools = LEGACY_TOOLS.has(tools0.join(','))
+        ? [...DEFAULT_ITEM_ORDER.tools] : tools0;
     return {
-        paths:   Array.isArray(v.paths)   && v.paths.length   ? v.paths!   : DEFAULT_ITEM_ORDER.paths,
-        actions: Array.isArray(v.actions) && v.actions.length ? v.actions! : DEFAULT_ITEM_ORDER.actions,
-        svnops:  Array.isArray(v.svnops)  && v.svnops.length  ? v.svnops!  : DEFAULT_ITEM_ORDER.svnops,
+        actions: pick('actions', v.actions),
+        svnops:  pick('svnops', v.svnops),
+        gitops:  pick('gitops', v.gitops),
+        tools,
     };
 }
 
-function getActionLabel(cfg: vscode.WorkspaceConfiguration, key: 'formalBuild' | 'testBuild' | 'buildOnly' | 'svnUpdate' | 'svnCleanRevert'): string {
+function getActionLabel(cfg: vscode.WorkspaceConfiguration, key: 'formalBuild' | 'testBuild' | 'buildOnly' | 'svnUpdate' | 'svnCleanRevert' | 'gitUpdate' | 'gitResetClean'): string {
     const overrides: Record<typeof key, string> = {
         formalBuild: 'formalBuildLabel',
         testBuild: 'testBuildLabel',
         buildOnly: 'buildOnlyLabel',
         svnUpdate: 'svnUpdateLabel',
         svnCleanRevert: 'svnCleanRevertLabel',
+        gitUpdate: 'gitUpdateLabel',
+        gitResetClean: 'gitResetCleanLabel',
     };
     const defaultLabels: Record<typeof key, string> = {
-        formalBuild: 'Formal BIOS Build',
-        testBuild: 'Test BIOS Build',
-        buildOnly: 'Build Only',
+        formalBuild: 'Formal BIOS Version',
+        testBuild: 'Test BIOS Version',
+        buildOnly: 'Build',
         svnUpdate: 'SVN Update',
         svnCleanRevert: 'SVN Clean & Revert',
+        gitUpdate: 'Git Update',
+        gitResetClean: 'Git Reset & Clean',
     };
     const value = readWorkspaceValue<string>(cfg, overrides[key]);
     return typeof value === 'string' && value.trim() ? value.trim() : defaultLabels[key];
+}
+
+// ---------------------------------------------------------------------------
+// Build rows (Build Only plus any build the user added)
+//
+// The preset row still keeps its three fields in the old settings (buildBat / buildArgs / buildOnlyLabel),
+// so existing configurations keep working after the upgrade; builds[] only records the extra rows, their names and scripts.
+// ---------------------------------------------------------------------------
+
+/** Script name without its extension — build rows are named after the .bat by default */
+function scriptLabel(script: string): string {
+    return scriptStem(script || '');
+}
+
+function presetBuild(cfg: vscode.WorkspaceConfiguration): BuildTarget {
+    const rawScript = cfg.get<string>('buildBat', '') || '';
+    const stem = scriptLabel(resolvePath(rawScript));
+    // The name follows the script: with no buildOnlyLabel in settings, use the .bat file name.
+    // Older versions wrote the script name into buildOnlyLabel on every swap — a name equal to the script name is not a rename.
+    const explicit = readWorkspaceValue<string>(cfg, 'buildOnlyLabel');
+    const named = typeof explicit === 'string' ? explicit.trim() : '';
+    const manual = !!named && named !== stem;
+    const preset = defaultBuilds(manual ? named : stem, rawScript, cfg.get<string>('buildArgs', '') || '')[0];
+    return manual ? { ...preset, renamed: true } : preset;
+}
+
+/**
+ * Versions up to 0.7.4 wrote the script name into buildOnlyLabel whenever the
+ * script changed, which pinned the name. On upgrade, drop such settings when they
+ * merely repeat the current script name, so the name follows again.
+ */
+function migrateAutoBuildLabel(): void {
+    const cfg = vscode.workspace.getConfiguration('biosBuddy');
+    const named = readWorkspaceValue<string>(cfg, 'buildOnlyLabel');
+    const bat = cfg.get<string>('buildBat', '') || '';
+    if (typeof named !== 'string' || !named.trim() || !bat) return;
+    if (named.trim() === scriptLabel(resolvePath(bat))) {
+        removeWorkspaceSetting('biosBuddy.buildOnlyLabel');
+    }
+}
+
+function getBuilds(cfg: vscode.WorkspaceConfiguration): BuildTarget[] {
+    const raw = readWorkspaceValue(cfg, 'builds');
+    if (raw === undefined) return [presetBuild(cfg)];
+    return normalizeBuilds(raw, presetBuild(cfg));
+}
+
+function saveBuilds(list: BuildTarget[]): boolean {
+    // The preset row's content always comes from those separate settings; this only records that it was removed,
+    // so one script is never stored twice with only one copy taking effect
+    const clean = list
+        .filter(b => b.id !== PRESET_BUILD_ID || b.hidden)
+        .map(b => b.id === PRESET_BUILD_ID
+            ? { id: b.id, hidden: true }
+            : {
+                id: b.id,
+                // The name is stored only after a manual rename; otherwise the panel derives it from the script name every time
+                ...(b.renamed ? { label: b.label, renamed: true } : {}),
+                script: b.script,
+                ...(b.args ? { args: b.args } : {}),
+                custom: true,
+            });
+    return writeWorkspaceSetting('biosBuddy.builds', clean);
+}
+
+function buildTargetOf(arg: unknown): BuildTarget | undefined {
+    const o = arg as { target?: BuildTarget } | undefined;
+    if (o && o.target && typeof o.target === 'object' && typeof o.target.id === 'string') return o.target;
+    return undefined;
+}
+
+/** How this row lands in the settings after its script or arguments change */
+function updateBuild(
+    presetPatch: { label?: string; script?: string; args?: string; renamed?: boolean },
+    list: BuildTarget[],
+    id: string,
+): boolean {
+    if (id === PRESET_BUILD_ID) {
+        if (presetPatch.script !== undefined) writeWorkspaceSetting('biosBuddy.buildBat', presetPatch.script);
+        // When the name follows the script we store nothing, so the next .bat swap renames it again
+        if (presetPatch.renamed === false) removeWorkspaceSetting('biosBuddy.buildOnlyLabel');
+        else if (presetPatch.label !== undefined) writeWorkspaceSetting('biosBuddy.buildOnlyLabel', presetPatch.label);
+        if (presetPatch.args !== undefined) writeWorkspaceSetting('biosBuddy.buildArgs', presetPatch.args);
+        return true;
+    }
+    const idx = list.findIndex(b => b.id === id);
+    if (idx < 0) return false;
+    list[idx] = {
+        ...list[idx],
+        ...(presetPatch.label !== undefined ? { label: presetPatch.label } : {}),
+        ...(presetPatch.script !== undefined ? { script: presetPatch.script } : {}),
+        ...(presetPatch.args !== undefined ? { args: presetPatch.args } : {}),
+        ...(presetPatch.renamed !== undefined ? { renamed: presetPatch.renamed || undefined } : {}),
+    };
+    return saveBuilds(list);
+}
+
+// ---------------------------------------------------------------------------
+// SVN / Git actions (presets plus user-defined ones)
+// ---------------------------------------------------------------------------
+
+function vcsSettingKey(tool: VcsTool): string {
+    return tool === 'svn' ? 'svnActions' : 'gitActions';
+}
+
+function vcsDefaultLabels(cfg: vscode.WorkspaceConfiguration, tool: VcsTool): { update: string; clean: string } {
+    return tool === 'svn'
+        ? { update: getActionLabel(cfg, 'svnUpdate'), clean: getActionLabel(cfg, 'svnCleanRevert') }
+        : { update: getActionLabel(cfg, 'gitUpdate'), clean: getActionLabel(cfg, 'gitResetClean') };
+}
+
+/** The action list in force: presets until settings.json has its own copy, then that copy wins */
+function getVcsActions(cfg: vscode.WorkspaceConfiguration, tool: VcsTool): VcsAction[] {
+    const defaults = defaultActions(tool, vcsDefaultLabels(cfg, tool));
+    const raw = readWorkspaceValue(cfg, vcsSettingKey(tool));
+    if (raw === undefined) return defaults;
+    return normalizeActions(raw);
+}
+
+function saveVcsActions(tool: VcsTool, list: VcsAction[]): boolean {
+    return writeWorkspaceSetting(`biosBuddy.${vcsSettingKey(tool)}`, list);
+}
+
+function removeWorkspaceSetting(key: string): boolean {
+    const p = workspaceSettingsPath();
+    if (!p || !fs.existsSync(p)) return true;
+    try {
+        const txt = fs.readFileSync(p, 'utf-8').replace(/^\uFEFF/, '');
+        const settings = txt.trim() ? JSON.parse(txt) as Record<string, unknown> : {};
+        if (!(key in settings)) return true;
+        delete settings[key];
+        fs.writeFileSync(p, JSON.stringify(settings, null, 4) + '\n', 'utf-8');
+        mirrorOwnedSettings();
+        return true;
+    } catch (e) {
+        vscode.window.showErrorMessage(
+            `BIOS Buddy: cannot write ${p}: ${(e as Error).message}`,
+        );
+        return false;
+    }
+}
+
+function vcsGroupOf(tool: VcsTool): OrderGroup {
+    return tool === 'svn' ? 'svnops' : 'gitops';
+}
+
+/** Work out which action a command argument refers to — inline buttons pass a TreeItem, context menus pass the element */
+interface VcsTarget { tool: VcsTool; action: VcsAction; }
+
+function vcsTargetOf(arg: unknown): VcsTarget | undefined {
+    const o = arg as (Partial<VcsTarget> & { tool?: VcsTool; action?: VcsAction }) | undefined;
+    if (o && o.action && typeof o.action === 'object' && (o.tool === 'svn' || o.tool === 'git')) {
+        return { tool: o.tool, action: o.action };
+    }
+    return undefined;
 }
 
 // Pick a codicon for a def Config token so every child row carries an icon;
@@ -247,6 +555,13 @@ function fieldIcon(key: string): string {
     return 'symbol-field';
 }
 
+// Every row carries a 16px icon so all labels land on the same column. Emoji in a
+// label are wider than a codicon, which shoves that one label out of line.
+function treeIcon(id: string, colorId?: string): vscode.ThemeIcon {
+    const Color = (vscode as unknown as { ThemeColor?: new (id: string) => vscode.ThemeColor }).ThemeColor;
+    return colorId && Color ? new vscode.ThemeIcon(id, new Color(colorId)) : new vscode.ThemeIcon(id);
+}
+
 // Stable sort: items keep their relative order unless `order` moves them.
 function sortByDnd<T>(items: T[], order: string[], keyOf: (x: T) => string | undefined): T[] {
     const rank = (x: T) => {
@@ -255,6 +570,21 @@ function sortByDnd<T>(items: T[], order: string[], keyOf: (x: T) => string | und
         return i < 0 ? Number.MAX_SAFE_INTEGER : i;
     };
     return [...items].sort((a, b) => rank(a) - rank(b));
+}
+
+// The order a group currently shows in the tree (same rules getChildren uses).
+// Move up / down falls back on it: ids missing from the order table (newly added actions) have no position otherwise.
+function displayedIds(group: OrderGroup, cfg: vscode.WorkspaceConfiguration): string[] {
+    const order = getItemOrder(cfg)[group];
+    const sorted = (ids: string[]) => sortByDnd(ids, order, x => x);
+    switch (group) {
+        case 'actions':
+            return sorted(['incBuild', 'testBuild', ...visibleBuilds(getBuilds(cfg)).map(b => b.id)]);
+        case 'tools':   return sorted(['guidTool', 'serialTool', 'binEdit', 'txtCmp']);
+        case 'svnops':  return sorted(visibleActions(getVcsActions(cfg, 'svn')).map(a => a.id));
+        case 'gitops':  return sorted(visibleActions(getVcsActions(cfg, 'git')).map(a => a.id));
+        default:        return [];
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -268,18 +598,42 @@ interface DndPayload {
     ids: string[];
 }
 
-class BiosPanelProvider implements vscode.TreeDataProvider<ElementKind>,
+// The five top-level groups. The objects must be reused: TreeView.reveal() matches by identity,
+// so a fresh { kind:'group', id } on every getChildren makes "expand all" fail silently.
+const PANEL_GROUPS = ['version', 'actions', 'svnops', 'gitops', 'tools'] as const;
+const GROUP_ELEMENTS: ElementKind[] = PANEL_GROUPS.map(id => ({ kind: 'group', id }));
+
+function groupElement(id: string): ElementKind | undefined {
+    return GROUP_ELEMENTS.find(g => g.kind === 'group' && g.id === id);
+}
+
+export class BiosPanelProvider implements vscode.TreeDataProvider<ElementKind>,
                                        vscode.TreeDragAndDropController<ElementKind> {
     private _onDidChangeTreeData = new vscode.EventEmitter<ElementKind | undefined | null | void>();
     readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
     readonly dragMimeTypes = [ITEM_DND_MIME];
-    readonly dropMimeTypes = [ITEM_DND_MIME];
+    readonly dropMimeTypes = [ITEM_DND_MIME, 'text/uri-list'];   // uri-list: files dragged in from the Explorer
+
+    constructor(private readonly ctx: vscode.ExtensionContext) { }
 
     refresh() { this._onDidChangeTreeData.fire(); }
 
+    // Used by the one-click collapse: mark every group Collapsed so VS Code redraws them shut
+    private allCollapsed = false;
+    forceCollapse(collapsed: boolean) {
+        if (this.allCollapsed === collapsed) return;
+        this.allCollapsed = collapsed;
+        this.refresh();
+    }
+    // Expanding a group by hand only clears the flag; a refresh would redraw everyone else too
+    clearCollapsedFlag() { this.allCollapsed = false; }
+    get collapsingAll() { return this.allCollapsed; }
+
     private dndOf(e: ElementKind): { id: string; group: string } | undefined {
         if (e.kind === 'action' && e.dndGroup) return { id: e.id, group: e.dndGroup };
+        if (e.kind === 'build' && e.dndGroup) return { id: e.target.id, group: e.dndGroup };
+        if (e.kind === 'vcs') return { id: e.action.id, group: vcsGroupOf(e.tool) };
         if (e.kind === 'info' && e.dndId && e.dndGroup) return { id: e.dndId, group: e.dndGroup };
         return undefined;
     }
@@ -302,7 +656,23 @@ class BiosPanelProvider implements vscode.TreeDataProvider<ElementKind>,
 
     async handleDrop(target: ElementKind | undefined, dataTransfer: vscode.DataTransfer): Promise<void> {
         const payload = dataTransfer.get(ITEM_DND_MIME)?.value as DndPayload | undefined;
-        if (!payload || !Array.isArray(payload.ids) || payload.ids.length === 0) return;
+
+        // Files dropped in from outside (no internal drag marker) open in the Binary Editor, at most two, A and B
+        if (!payload) {
+            const raw = dataTransfer.get('text/uri-list');
+            const text = raw ? String(raw.value ?? '') : '';
+            const uris = text.split(/\r?\n/)
+                .map(s => s.trim())
+                .filter(s => s && s !== 'undefined' && !s.startsWith('#'))
+                .map(s => { try { return vscode.Uri.parse(s); } catch { return undefined; } })
+                .filter((u): u is vscode.Uri => !!u && (u.scheme === 'file' || u.scheme === 'vscode-remote'));
+            if (uris.length) {
+                await openBinaryEditor(this.ctx, uris.slice(0, 2));
+                return;
+            }
+            return;
+        }
+        if (!Array.isArray(payload.ids) || payload.ids.length === 0) return;
 
         // Resolve the drop target group; dropping onto a group node appends.
         let targetGroup: string | undefined;
@@ -325,7 +695,7 @@ class BiosPanelProvider implements vscode.TreeDataProvider<ElementKind>,
     }
 
     private async reorderVersionFields(ids: string[], beforeId?: string): Promise<void> {
-        const cfg = vscode.workspace.getConfiguration('biosBuildAssistant');
+        const cfg = vscode.workspace.getConfiguration('biosBuddy');
         const list = getInfoFields(cfg);
         const moved = new Set(ids);
         const dragged = list.filter(e => moved.has(e.key));
@@ -341,13 +711,17 @@ class BiosPanelProvider implements vscode.TreeDataProvider<ElementKind>,
     }
 
     private async reorderGroup(group: OrderGroup, ids: string[], beforeId?: string): Promise<void> {
-        const cfg = vscode.workspace.getConfiguration('biosBuildAssistant');
+        const cfg = vscode.workspace.getConfiguration('biosBuddy');
         const order = getItemOrder(cfg);
-        const current = order[group];
+        // Start from the tree's current order so ids the table has never seen (just-added actions or builds) can still be dragged
+        const shown = displayedIds(group, cfg);
+        const base = order[group].filter(k => shown.includes(k));
+        for (const sid of shown) if (!base.includes(sid)) base.push(sid);
+
         const moved = new Set(ids);
-        const dragged = current.filter(k => moved.has(k));
+        const dragged = base.filter(k => moved.has(k));
         if (dragged.length === 0) return;
-        const remaining = current.filter(k => !moved.has(k));
+        const remaining = base.filter(k => !moved.has(k));
         let at = remaining.length;
         if (beforeId) {
             const idx = remaining.indexOf(beforeId);
@@ -355,7 +729,7 @@ class BiosPanelProvider implements vscode.TreeDataProvider<ElementKind>,
         }
         remaining.splice(at, 0, ...dragged);
         order[group] = remaining;
-        if (writeWorkspaceSetting('biosBuildAssistant.itemOrder', order)) this.refresh();
+        if (writeWorkspaceSetting('biosBuddy.itemOrder', order)) this.refresh();
     }
 
     getTreeItem(element: ElementKind): vscode.TreeItem {
@@ -365,17 +739,50 @@ class BiosPanelProvider implements vscode.TreeDataProvider<ElementKind>,
                 return new vscode.TreeItem('');
             }
             case 'group': {
-                const map: Record<string, string> = {
-                    paths: '📁 Key File Path',
-                    version: '🔢 BIOS Current Info',
-                    actions: '⚡ BIOS Build Action',
-                    svnops: '🔧 SVN Operation',
+                // Titles are text plus an icon only: an emoji inside the label pushes the text right,
+                // which knocks the title out of line with the child rows.
+                const map: Record<string, { label: string; icon: string }> = {
+                    version: { label: 'BIOS Current Info', icon: 'symbol-numeric' },
+                    actions: { label: 'BIOS Build Action', icon: 'zap' },
+                    svnops:  { label: 'SVN Operation',     icon: '' },
+                    gitops:  { label: 'Git Operation',     icon: '' },
+                    tools:   { label: 'Tools',             icon: 'tools' },
                 };
+                const meta = map[element.id] ?? { label: element.id, icon: 'circle-filled' };
                 const item = new vscode.TreeItem(
-                    map[element.id] ?? element.id,
-                    vscode.TreeItemCollapsibleState.Expanded,
+                    meta.label,
+                    this.allCollapsed
+                        ? vscode.TreeItemCollapsibleState.Collapsed
+                        : vscode.TreeItemCollapsibleState.Expanded,
                 );
-                if (element.id === 'version') item.contextValue = 'versionGroup';
+                // A fixed id is what lets VS Code keep the expand state across refreshes caused by other groups
+                item.id = 'biosGroup:' + element.id;
+                if (meta.icon) item.iconPath = treeIcon(meta.icon);
+                if (element.id === 'version') {
+                    item.contextValue = 'versionGroup';
+                    item.tooltip = 'The BIOS version file and the fields shown from it — hover the title for + (add field) and ↺ (reset fields)';
+                }
+                if (element.id === 'actions') {
+                    item.contextValue = 'actionsGroup';
+                    item.tooltip = 'Formal / Test only rewrite the version fields; builds run a script. '
+                        + 'Hover this title for + (add another build) — or right-click a row → Add Build. '
+                        + '↺ puts the default Build row back';
+                }
+                if (element.id === 'svnops' || element.id === 'gitops') {
+                    // Monochrome: white on dark themes, dark grey on light ones (two files, same shape)
+                    const base = element.id === 'svnops' ? 'svn' : 'git';
+                    const dir = path.join(this.ctx.extensionUri.fsPath, 'media', 'icons');
+                    item.iconPath = {
+                        light: vscode.Uri.file(path.join(dir, `${base}-light.svg`)),
+                        dark: vscode.Uri.file(path.join(dir, `${base}-dark.svg`)),
+                    };
+                    item.contextValue = element.id === 'svnops' ? 'svnGroup' : 'gitGroup';
+                    item.tooltip = element.id === 'svnops'
+                        ? 'SVN actions — hover the title for + (add) and ↺ (restore defaults)'
+                        : 'Git actions — hover the title for + (add) and ↺ (restore defaults)';
+                }
+                const stampedGroup = item as vscode.TreeItem & { groupId?: string };
+                stampedGroup.groupId = element.id;
                 return item;
             }
             case 'info': {
@@ -387,26 +794,29 @@ class BiosPanelProvider implements vscode.TreeDataProvider<ElementKind>,
                 if (element.tooltip) item.tooltip = element.tooltip;
                 if (element.cfgKey) item.contextValue = 'infoField';
                 else if (element.dndGroup === 'paths') {
-                    item.contextValue = element.commandId === 'configureDefFile' ? 'pathDefFile' : 'pathBuildBat';
-                    item.command = element.commandId ? {
-                        command: `biosBuildAssistant.${element.commandId}`,
-                        title: 'Configure path',
-                    } : undefined;
+                    // This row is the old "Key File Path → BIOS Version File", now living under Current Info
+                    item.contextValue = 'pathDefFile';
+                    item.command = { command: 'biosBuddy.configureDefFile', title: 'Configure BIOS Version File' };
                 }
 
                 let iconName: string | undefined;
                 if (element.icon) {
                     iconName = element.icon;
+                } else if (element.tint) {
+                    iconName = element.tint === 'error' ? 'error' : 'warning';
                 } else if (element.dndGroup === 'paths') {
                     iconName = 'file-code';
                 } else if (element.dndGroup === 'version') {
                     iconName = 'symbol-field';
-                } else if (/^[⚠❌]/.test(element.label)) {
-                    iconName = 'warning';
                 } else if (element.cfgKey) {
                     iconName = fieldIcon(element.cfgKey);
                 }
-                if (iconName) item.iconPath = new vscode.ThemeIcon(iconName);
+                if (iconName) {
+                    const colorId = element.tint === 'error'
+                        ? 'problemsErrorIcon.foreground'
+                        : (element.tint === 'warning' ? 'problemsWarningIcon.foreground' : undefined);
+                    item.iconPath = treeIcon(iconName, colorId);
+                }
                 if (element.filePath) {
                     const line = element.line ?? 0;
                     const pos = new vscode.Position(line, 0);
@@ -422,141 +832,894 @@ class BiosPanelProvider implements vscode.TreeDataProvider<ElementKind>,
                 return item;
             }
             case 'action': {
-                const cfg = vscode.workspace.getConfiguration('biosBuildAssistant');
+                const cfg = vscode.workspace.getConfiguration('biosBuddy');
                 const labels = {
                     incBuild:      getActionLabel(cfg, 'formalBuild'),
                     testBuild:     getActionLabel(cfg, 'testBuild'),
-                    buildOnly:     getActionLabel(cfg, 'buildOnly'),
-                    svnUpdate:     getActionLabel(cfg, 'svnUpdate'),
-                    svnCleanRevert:getActionLabel(cfg, 'svnCleanRevert'),
                 };
                 const meta = {
-                    incBuild:      { label: labels.incBuild,      icon: 'repo-push',  tip: 'Increment MINOR, update dates, then compile' },
-                    testBuild:     { label: labels.testBuild,     icon: 'beaker',     tip: 'Build ID W -> T01 (or T02, T03...), update dates, then compile' },
-                    buildOnly:     { label: labels.buildOnly,     icon: 'terminal',    tip: 'Run build bat, no version change' },
-                    svnUpdate:     { label: labels.svnUpdate,     icon: 'sync',        tip: 'svn update' },
-                    svnCleanRevert:{ label: labels.svnCleanRevert,icon: 'clear-all',   tip: 'cleanup & revert -R & cleanup --remove-unversioned & status' },
+                    incBuild:      { label: labels.incBuild,      icon: 'repo-push',  tip: 'Formal BIOS: bump MINOR (+MAJOR on overflow) and refresh the date/build fields. Version only — nothing is compiled. Click a build row when you want to build.' },
+                    testBuild:     { label: labels.testBuild,     icon: 'beaker',     tip: 'Test BIOS: Build ID W -> T01 (or T02, T03...) and refresh the date fields. Version only — nothing is compiled. Click a build row when you want to build.' },
+                    binEdit:       { label: 'Binary Editor',       icon: 'file-binary', tip: 'Open the built-in binary / HEX editor (dual pane, compare, padding resize) — you can also drop files here: 2 files → A + B, 1 file → A' },
+                    serialTool:    { label: 'COM Assistant', icon: 'plug',     tip: 'Open the COM / UART port console: raw bytes, HEX view, timestamps, per-line endings — connect, send and watch BIOS serial output in one window' },
+                    guidTool:      { label: 'GUID Assistant', icon: 'key',     tip: 'Generate GUIDs (v4 / v1) and convert any GUID between D / N / B / P, C struct, UEFI #define, EFI byte array, raw bytes and Base64 — paste one form, copy any of the others' },
+                    txtCmp:        { label: 'Text Comparer', icon: 'diff',      tip: 'Compare two text files side by side (.def / .dsc / .txt / logs): real line alignment, character-level highlighting, ignore whitespace / case / blank lines, copy or save the result as a unified diff' },
                 }[element.id];
                 const item = new vscode.TreeItem(
                     meta.label,
                     vscode.TreeItemCollapsibleState.None,
                 );
                 const isConfigurableBuild = element.id === 'incBuild' || element.id === 'testBuild';
-                item.contextValue = isConfigurableBuild ? 'actionWithConfig' : 'action';
+                item.contextValue = isConfigurableBuild ? 'actionWithConfig' : ('action' + element.id.charAt(0).toUpperCase() + element.id.slice(1));
                 item.tooltip = meta.tip;
                 item.iconPath = new vscode.ThemeIcon(meta.icon);
                 const cmdMap: Record<string, string> = {
-                    incBuild:      'biosBuildAssistant.incrementAndBuild',
-                    testBuild:     'biosBuildAssistant.testBuild',
-                    buildOnly:     'biosBuildAssistant.buildOnly',
-                    svnUpdate:     'biosBuildAssistant.svnUpdate',
-                    svnCleanRevert:'biosBuildAssistant.svnCleanRevert',
+                    incBuild:      'biosBuddy.formalVersion',
+                    testBuild:     'biosBuddy.testVersion',
+                    binEdit:       'biosBuddy.binaryEditor',
+                    serialTool:    'biosBuddy.serialConsole',
+                    guidTool:      'biosBuddy.guidTool',
+                    txtCmp:        'biosBuddy.textComparer',
                 };
-                item.command = {
-                    command: cmdMap[element.id],
-                    title: meta.label,
-                };
+                const cmdId = cmdMap[element.id];
+                if (cmdId) item.command = { command: cmdId, title: meta.label };
+                // The inline gear receives this TreeItem, so its identity rides along instead of asking which version was clicked
+                const stamped = item as vscode.TreeItem & { actionId?: string };
+                stamped.actionId = element.id;
 
                 return item;
             }
+            case 'build': {
+                // One row = one script. Click to run, gear to change the script, bin to remove it
+                const t = element.target;
+                const script = resolvePath(t.script);
+                const missing = !script || !fs.existsSync(script);
+                // The name is always derived from the script file, so swapping the .bat renames it at once (unless renamed by hand)
+                const label = displayLabel(t);
+                const item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.None);
+                // The name usually is the script name, so do not repeat it; only a rename or extra arguments need a description
+                const base = script ? path.basename(script) : '';
+                const stem = base.replace(/\.(bat|cmd|ps1)$/i, '');
+                const detail = [stem && stem !== label ? base : '', t.args || ''].filter(Boolean).join('  ');
+                item.description = !script ? '(no script)' : missing ? 'script not found' : (detail || undefined);
+                item.tooltip = [
+                    label,
+                    script ? `  ${script}` : '  no build script configured yet — click the gear',
+                    ...(t.args ? [`  args: ${t.args}`] : []),
+                    missing ? '  ⚠ script not found' : '  click this row to run it in a terminal',
+                ].join('\n');
+                item.iconPath = missing
+                    ? treeIcon('error', 'problemsErrorIcon.foreground')
+                    : new vscode.ThemeIcon(t.custom ? 'play' : 'terminal');
+                item.contextValue = t.custom ? 'buildCustom' : 'buildPreset';
+                item.command = {
+                    command: 'biosBuddy.runBuildTarget',
+                    title: label,
+                    arguments: [{ target: t }],
+                };
+                const stamped = item as vscode.TreeItem & { target?: BuildTarget };
+                stamped.target = t;
+                return item;
+            }
+            case 'buildHidden': {
+                const t = element.target;
+                const label = displayLabel(t);
+                const item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.None);
+                item.description = 'removed';
+                item.tooltip = [
+                    label,
+                    'Removed from the panel.',
+                    'Click this row (or use "Put Back") to show it again — its script is still the one in buildBat.',
+                ].join('\n');
+                item.iconPath = new vscode.ThemeIcon('history');
+                item.contextValue = 'buildHidden';
+                item.command = {
+                    command: 'biosBuddy.restoreBuild',
+                    title: 'Put back ' + label,
+                    arguments: [{ target: t }],
+                };
+                return item;
+            }
+            case 'vcs': {
+                const cfg = vscode.workspace.getConfiguration('biosBuddy');
+                const defaults = defaultActions(element.tool, vcsDefaultLabels(cfg, element.tool));
+                const a = element.action;
+                const item = new vscode.TreeItem(a.label, vscode.TreeItemCollapsibleState.None);
+                const changed = isModified(a, defaults);
+                item.description = a.custom ? 'custom' : (changed ? 'modified' : undefined);
+                item.tooltip = [
+                    a.label,
+                    ...a.steps.map(s => '  ' + s),
+                    a.builtin
+                        ? 'built-in flow (the lines above are a preview) · runs in the terminal'
+                        : 'runs in the terminal',
+                ].join('\n');
+                // Presets keep the shared icons (Update=sync, Clean=clear-all); custom actions get a play icon
+                const icon = a.custom
+                    ? 'play'
+                    : (a.builtin === 'svnClean' || a.builtin === 'gitResetClean' ? 'clear-all'
+                        : (a.builtin ? 'sync' : 'play'));
+                item.iconPath = new vscode.ThemeIcon(icon);
+                item.contextValue = a.custom
+                    ? `vcsCustomAction.${element.tool}`
+                    : (changed ? `vcsActionModified.${element.tool}` : `vcsAction.${element.tool}`);
+                // Clicking the row runs it; inline buttons receive this TreeItem, so the identity is attached here
+                item.command = {
+                    command: 'biosBuddy.runVcsAction',
+                    title: a.label,
+                    arguments: [{ tool: element.tool, action: a }],
+                };
+                const stamped = item as vscode.TreeItem & { tool?: VcsTool; action?: VcsAction };
+                stamped.tool = element.tool;
+                stamped.action = a;
+                return item;
+            }
+            case 'vcsHidden': {
+                // A removed preset: grey placeholder row, one click puts it back
+                const a = element.action;
+                const item = new vscode.TreeItem(a.label, vscode.TreeItemCollapsibleState.None);
+                item.description = 'removed';
+                item.tooltip = [
+                    a.label,
+                    'Removed from the panel.',
+                    'Click this row (or use "Put Back") to show it again with its original command.',
+                ].join('\n');
+                item.iconPath = new vscode.ThemeIcon('history');
+                item.contextValue = `vcsHidden.${element.tool}`;
+                item.command = {
+                    command: 'biosBuddy.restoreVcsAction',
+                    title: 'Put back ' + a.label,
+                    arguments: [{ tool: element.tool, action: a }],
+                };
+                return item;
+            }
+        }
+    }
+
+    // Used by TreeView.reveal(): it walks the parent chain to know which group to expand.
+    // Top-level groups simply return undefined.
+    getParent(element: ElementKind): ElementKind | undefined {
+        switch (element.kind) {
+            case 'info':   return groupElement('version');
+            case 'action':
+            case 'build':
+            case 'buildHidden':
+                return groupElement('actions');
+            case 'vcs':
+            case 'vcsHidden':
+                return groupElement(element.tool === 'svn' ? 'svnops' : 'gitops');
+            default:
+                return undefined;
         }
     }
 
     getChildren(element?: ElementKind): ElementKind[] {
         try {
             if (!element) {
-                // Top level: four groups
-                return [
-                    { kind: 'group', id: 'paths' },
-                    { kind: 'group', id: 'version' },
-                    { kind: 'group', id: 'actions' },
-                    { kind: 'group', id: 'svnops' },
-                ];
+                // Top level: five groups (the version-file column now lives inside Current Info)
+                // Note: return the same object instances (see GROUP_ELEMENTS); never build new objects here.
+                return GROUP_ELEMENTS.slice();
             }
             if (element.kind !== 'group') {
                 // Leaf info/action nodes have no children
                 return [];
             }
 
-            const cfg = vscode.workspace.getConfiguration('biosBuildAssistant');
-
-            if (element.id === 'paths') {
-                const defPath = resolvePath(cfg.get<string>('defFile', ''));
-                const batPath = resolvePath(cfg.get<string>('buildBat', ''));
-                const items: ElementKind[] = [
-                    { kind: 'info', label: 'BIOS Version File', desc: defPath || '(not configured)', tooltip: defPath, filePath: defPath && fs.existsSync(defPath) ? defPath : undefined, dndId: 'defFile', dndGroup: 'paths', icon: 'file-code', commandId: 'configureDefFile' },
-                    { kind: 'info', label: 'Build Script', desc: batPath || '(not configured)', tooltip: batPath, filePath: batPath && fs.existsSync(batPath) ? batPath : undefined, dndId: 'buildBat', dndGroup: 'paths', icon: 'play', commandId: 'configureBuildBat' },
-                ];
-                return sortByDnd(items, getItemOrder(cfg).paths, x => x.kind === 'info' ? x.dndId : undefined);
-            }
+            const cfg = vscode.workspace.getConfiguration('biosBuddy');
 
             if (element.id === 'version') {
                 const defPath = resolvePath(cfg.get<string>('defFile', ''));
-                if (!defPath) {
-                    return [{ kind: 'info', label: '❌ BIOS Version File is not configured' }];
-                }
-                if (!fs.existsSync(defPath)) {
-                    return [{ kind: 'info', label: '❌ BIOS Version File is not founded', desc: defPath }];
-                }
+                const defExists = !!defPath && fs.existsSync(defPath);
+
+                // The first row is the version file reference (the old standalone Key File Path).
+                // Only the file name goes in the row, the full path in the tooltip — otherwise one row spans the whole sidebar
+                const out: ElementKind[] = [{
+                    kind: 'info',
+                    label: 'BIOS Version File',
+                    desc: defPath ? (defExists ? path.basename(defPath) : 'not found: ' + path.basename(defPath)) : '(not configured)',
+                    tooltip: defPath
+                        ? `${defPath}\n${defExists ? 'Click to open · gear to pick another file' : 'File is missing — click to pick another file'}`
+                        : 'No BIOS version file yet — click this row (or the gear) to pick BiosVersion.def',
+                    filePath: defExists ? defPath : undefined,
+                    dndGroup: 'paths',
+                    icon: 'file-code',
+                    tint: defExists ? undefined : 'error',
+                }];
+
+                if (!defPath || !defExists) return out;   // The red row is clickable to pick or change the file
+
                 let fields: ParsedField[];
                 let raw = '';
                 try {
                     raw = readDefFile(defPath);
                     fields = parseConfigFields(raw);
                 } catch (e) {
-                    return [{ kind: 'info', label: '❌ Failed to read file', desc: (e as Error).message }];
+                    out.push({ kind: 'info', label: 'Failed to read file', desc: (e as Error).message, tint: 'error' });
+                    return out;
                 }
 
                 if (fields.length === 0) {
-                    return [{
+                    out.push({
                         kind: 'info',
-                        label: '⚠️ No "Config" fields parsed',
+                        label: 'No "Config" fields parsed',
                         desc: `${raw.split(/\r?\n/).length} lines`,
                         tooltip: defPath,
-                    }];
+                        tint: 'warning',
+                    });
+                    return out;
                 }
 
-                const out: ElementKind[] = [];
                 for (const entry of getInfoFields(cfg)) {
                     const f = fields.find(x => x.key === entry.key);
                     if (!f) continue;
                     const v = stripValue(f.value);
                     if (!v) continue;
+                    // Warn when the same key appears twice in the def file (one under #ifdef, one under #else),
+                    // so nobody assumes only one copy changed
+                    const copies = fields.filter(x => x.key === entry.key).length;
                     out.push({
                         kind: 'info', label: entry.key, desc: v,
                         cfgKey: entry.key, filePath: defPath, line: f.lineIndex,
                         dndId: entry.key, dndGroup: 'version',
+                        tooltip: copies > 1
+                            ? `${defPath}\n${copies} copies in the file (#ifdef branches) — every copy is updated`
+                            : undefined,
                     });
                 }
-                if (out.length === 0) {
-                    out.push({ kind: 'info', label: '⚠️ No fields shown — click + to add or the reset button on the group title', tooltip: defPath });
+                if (out.length === 1) {
+                    out.push({ kind: 'info', label: 'No fields shown — click + to add or the reset button on the group title', tooltip: defPath, tint: 'warning' });
                 }
                 return out;
             }
 
             if (element.id === 'actions') {
+                // The first two rows only bump versions; the rest are build rows that run a script
                 const items: ElementKind[] = [
                     { kind: 'action', id: 'incBuild',  dndGroup: 'actions' },
                     { kind: 'action', id: 'testBuild', dndGroup: 'actions' },
-                    { kind: 'action', id: 'buildOnly', dndGroup: 'actions' },
                 ];
-                return sortByDnd(items, getItemOrder(cfg).actions, x => x.kind === 'action' ? x.id : undefined);
+                const builds = getBuilds(cfg);
+                for (const target of visibleBuilds(builds)) {
+                    items.push({ kind: 'build', target, dndGroup: 'actions' });
+                }
+                const sorted = sortByDnd(items, getItemOrder(cfg).actions,
+                    x => x.kind === 'build' ? x.target.id : (x.kind === 'action' ? x.id : undefined));
+                // Removed preset builds sit at the end; one click brings them back
+                return sorted.concat(hiddenBuilds(builds).map(target => ({ kind: 'buildHidden', target } as ElementKind)));
             }
 
-            if (element.id === 'svnops') {
+            if (element.id === 'svnops' || element.id === 'gitops') {
+                const tool: VcsTool = element.id === 'svnops' ? 'svn' : 'git';
+                const all = getVcsActions(cfg, tool);
+                let items: ElementKind[] = visibleActions(all)
+                    .map(action => ({ kind: 'vcs', tool, action } as ElementKind));
+                if (items.length === 0) {
+                    items = [{
+                        kind: 'info',
+                        label: tool === 'svn' ? 'No SVN actions — click + above' : 'No Git actions — click + above',
+                        icon: 'info',
+                    }];
+                } else {
+                    items = sortByDnd(items, getItemOrder(cfg)[vcsGroupOf(tool)],
+                        x => x.kind === 'vcs' ? x.action.id : undefined);
+                }
+                // Removed presets sit at the end; one click brings them back
+                return items.concat(hiddenActions(all).map(action => ({ kind: 'vcsHidden', tool, action } as ElementKind)));
+            }
+
+            if (element.id === 'tools') {
                 const items: ElementKind[] = [
-                    { kind: 'action', id: 'svnUpdate',      dndGroup: 'svnops' },
-                    { kind: 'action', id: 'svnCleanRevert', dndGroup: 'svnops' },
+                    { kind: 'action', id: 'guidTool',   dndGroup: 'tools' },
+                    { kind: 'action', id: 'serialTool', dndGroup: 'tools' },
+                    { kind: 'action', id: 'binEdit',    dndGroup: 'tools' },
+                    { kind: 'action', id: 'txtCmp',     dndGroup: 'tools' },
                 ];
-                return sortByDnd(items, getItemOrder(cfg).svnops, x => x.kind === 'action' ? x.id : undefined);
+                return sortByDnd(items, getItemOrder(cfg).tools, x => x.kind === 'action' ? x.id : undefined);
             }
 
             return [];
         } catch (e) {
-            vscode.window.showErrorMessage('BIOS Build Assistant panel error: ' + (e as Error).message);
-            return [{ kind: 'info', label: '❌ Error', desc: (e as Error).message }];
+            vscode.window.showErrorMessage('BIOS Buddy panel error: ' + (e as Error).message);
+            return [{ kind: 'info', label: 'Error', desc: (e as Error).message, tint: 'error' }];
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// SVN / Git actions: run, add, edit, remove, restore defaults
+// ---------------------------------------------------------------------------
+
+function refreshPanel(): void {
+    try { panelProvider?.refresh(); } catch { /* not activated yet */ }
+}
+
+function vcsLabelOf(tool: VcsTool): string {
+    return tool === 'svn' ? 'SVN' : 'Git';
+}
+
+function vcsToolOfArg(arg: unknown): VcsTool | undefined {
+    const o = arg as { tool?: VcsTool; groupId?: string } | undefined;
+    if (o?.tool === 'svn' || o?.tool === 'git') return o.tool;
+    if (o?.groupId === 'svnops') return 'svn';
+    if (o?.groupId === 'gitops') return 'git';
+    return undefined;
+}
+
+export async function runVcsAction(arg?: unknown, only?: VcsTool): Promise<void> {
+    let target = vcsTargetOf(arg);
+
+    // Invoked from the palette with no argument: list them and let the user pick (run SVN / run Git only list their own group)
+    if (!target) {
+        const cfg = vscode.workspace.getConfiguration('biosBuddy');
+        const tools: VcsTool[] = only ? [only] : ['svn', 'git'];
+        const items = tools.flatMap(tool =>
+            getVcsActions(cfg, tool).map(a => ({
+                label: a.label,
+                description: vcsLabelOf(tool),
+                detail: a.steps.join('  ·  '),
+                tool,
+                action: a,
+            })));
+        const picked = await vscode.window.showQuickPick(items, {
+            title: only ? `Run a ${vcsLabelOf(only)} action` : 'Run an SVN / Git action',
+            placeHolder: 'Pick an action to run',
+            ignoreFocusOut: true,
+        });
+        if (!picked) return;
+        target = { tool: picked.tool, action: picked.action };
+    }
+
+    const { tool, action } = target;
+
+    // Unmodified preset → the built-in flow (clean has to diff, preview, delete and verify, which one command cannot do)
+    switch (action.builtin) {
+        case 'svnUpdate': return svnUpdate();
+        case 'svnClean': {
+            // Clean deletes untracked files in .vscode, settings.json included,
+            // so snapshot first and restore afterwards — nobody has to reconfigure.
+            mirrorOwnedSettings();
+            snapshotDotVscode();
+            await svnClean();
+            watchDotVscode();
+            return;
+        }
+        case 'gitUpdate': return gitUpdate();
+        case 'gitResetClean': {
+            mirrorOwnedSettings();
+            snapshotDotVscode();
+            await gitResetClean();
+            watchDotVscode();
+            return;
+        }
+        default: break;
+    }
+
+    if (!action.steps.length) {
+        vscode.window.showErrorMessage(`BIOS Buddy: "${action.label}" has no command.`);
+        return;
+    }
+
+    const root = await vcsRootFor(tool);
+    if (!root) {
+        vscode.window.showErrorMessage(
+            `BIOS Buddy: "${workspaceRootOrEmpty()}" is not inside a ${vcsLabelOf(tool)} working copy, so "${action.label}" has nothing to run against.`);
+        return;
+    }
+    // Always through a terminal: update / pull may ask for credentials or need conflict resolution, and only a terminal can do that
+    const steps = action.steps.map(s => expandStep(s, root));
+    runStepsInTerminal(tool, action.label, root, steps);
+}
+
+function workspaceRootOrEmpty(): string {
+    return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
+}
+
+/** Palette entry point: resolve the action in force by id and run it (a user-edited one runs as edited) */
+async function runVcsActionById(tool: VcsTool, id: string): Promise<void> {
+    const cfg = vscode.workspace.getConfiguration('biosBuddy');
+    const action = findAction(getVcsActions(cfg, tool), id)
+        ?? findAction(defaultActions(tool, vcsDefaultLabels(cfg, tool)), id);
+    if (!action) {
+        vscode.window.showErrorMessage(`BIOS Buddy: "${id}" no longer exists in the ${vcsLabelOf(tool)} actions.`);
+        return;
+    }
+    return runVcsAction({ tool, action });
+}
+
+async function pickVcsTool(title: string): Promise<VcsTool | undefined> {
+    const picked = await vscode.window.showQuickPick([
+        { label: 'SVN Operation', value: 'svn' as VcsTool },
+        { label: 'Git Operation', value: 'git' as VcsTool },
+    ], { title, placeHolder: 'Which group?', ignoreFocusOut: true });
+    return picked?.value;
+}
+
+export async function addVcsAction(arg?: unknown): Promise<void> {
+    const tool = vcsToolOfArg(arg) ?? await pickVcsTool('Add an action to…');
+    if (!tool) return;
+    const cfg = vscode.workspace.getConfiguration('biosBuddy');
+    const list = getVcsActions(cfg, tool);
+
+    const name = await vscode.window.showInputBox({
+        title: `Add ${vcsLabelOf(tool)} action`,
+        prompt: 'Name shown in the panel',
+        placeHolder: tool === 'svn' ? 'e.g. SVN Status' : 'e.g. Git Log',
+        ignoreFocusOut: true,
+    });
+    if (name === undefined) return;
+    if (!name.trim()) return;
+
+    const text = await vscode.window.showInputBox({
+        title: `Add ${vcsLabelOf(tool)} action — command`,
+        prompt: 'Command(s): separate with &&   ·   {root} = working copy / repo root',
+        placeHolder: tool === 'svn' ? 'svn status --no-ignore' : 'git log --oneline -10',
+        ignoreFocusOut: true,
+    });
+    if (text === undefined) return;
+    const steps = splitSteps(text);
+    if (!steps.length) {
+        vscode.window.showErrorMessage('BIOS Buddy: no command entered, nothing added.');
+        return;
+    }
+
+    list.push({
+        id: makeCustomId(tool, list),
+        label: name.trim(),
+        steps,
+        custom: true,
+    });
+    if (saveVcsActions(tool, list)) refreshPanel();
+}
+
+export async function editVcsAction(arg?: unknown): Promise<void> {
+    const target = vcsTargetOf(arg);
+    if (!target) return;
+    const cfg = vscode.workspace.getConfiguration('biosBuddy');
+    const list = getVcsActions(cfg, target.tool);
+    const defaults = defaultActions(target.tool, vcsDefaultLabels(cfg, target.tool));
+    const cur = findAction(list, target.action.id) ?? target.action;
+
+    const text = await vscode.window.showInputBox({
+        title: `Command — ${cur.label}`,
+        prompt: 'Separate commands with &&   ·   {root} = working copy / repo root   ·   keep it identical to restore the built-in flow',
+        value: joinSteps(cur.steps),
+        ignoreFocusOut: true,
+    });
+    if (text === undefined) return;
+    const steps = splitSteps(text);
+    if (!steps.length) {
+        vscode.window.showErrorMessage('BIOS Buddy: the command cannot be empty. Use "Restore default" instead.');
+        return;
+    }
+
+    const next = withSteps(cur, steps, defaults);
+    const idx = list.findIndex(a => a.id === cur.id);
+    if (idx < 0) list.push(next); else list[idx] = next;
+    if (saveVcsActions(target.tool, list)) refreshPanel();
+}
+
+async function renameVcsAction(arg?: unknown): Promise<void> {
+    const target = vcsTargetOf(arg);
+    if (!target) return;
+    const cfg = vscode.workspace.getConfiguration('biosBuddy');
+    const list = getVcsActions(cfg, target.tool);
+    const cur = findAction(list, target.action.id) ?? target.action;
+
+    const name = await vscode.window.showInputBox({
+        title: 'Rename action',
+        prompt: 'Name shown in the panel',
+        value: cur.label,
+        ignoreFocusOut: true,
+    });
+    if (name === undefined || !name.trim()) return;
+
+    const idx = list.findIndex(a => a.id === cur.id);
+    const next = { ...cur, label: name.trim() };
+    if (idx < 0) list.push(next); else list[idx] = next;
+    if (saveVcsActions(target.tool, list)) refreshPanel();
+}
+
+async function resetVcsAction(arg?: unknown): Promise<void> {
+    const target = vcsTargetOf(arg);
+    if (!target) return;
+    const cfg = vscode.workspace.getConfiguration('biosBuddy');
+    const list = getVcsActions(cfg, target.tool);
+    const defaults = defaultActions(target.tool, vcsDefaultLabels(cfg, target.tool));
+    const d = findAction(defaults, target.action.id);
+    if (!d) return;
+
+    const idx = list.findIndex(a => a.id === target.action.id);
+    if (idx < 0) list.push({ ...d }); else list[idx] = { ...d };
+    if (saveVcsActions(target.tool, list)) {
+        refreshPanel();
+        vscode.window.setStatusBarMessage(`BIOS Buddy: "${d.label}" restored to default`, 3000);
+    }
+}
+
+export async function deleteVcsAction(arg?: unknown): Promise<void> {
+    const target = vcsTargetOf(arg);
+    if (!target) return;
+    const cfg = vscode.workspace.getConfiguration('biosBuddy');
+    const list = getVcsActions(cfg, target.tool);
+    const cur = findAction(list, target.action.id);
+    if (!cur) return;
+
+    const isPreset = !cur.custom;
+    const pick = await vscode.window.showWarningMessage(
+        `Remove "${cur.label}" from ${vcsLabelOf(target.tool)} actions?`,
+        {
+            modal: true,
+            detail: isPreset
+                ? 'This one is a preset, so it is only hidden: a grey "removed" row stays at the bottom of the group and puts it back with one click. No file and no repository change.'
+                : 'Only the panel entry is removed — no file and no repository change.',
+        },
+        'Remove',
+    );
+    if (pick !== 'Remove') return;
+
+    const next = removeAction(list, cur.id);
+    if (saveVcsActions(target.tool, next)) {
+        // Order table: drop custom actions when they are deleted, keep presets so they return to their old slot
+        if (cur.custom) {
+            const order = getItemOrder(cfg);
+            const g = vcsGroupOf(target.tool);
+            order[g] = order[g].filter(id => id !== cur.id);
+            writeWorkspaceSetting('biosBuddy.itemOrder', order);
+        }
+        refreshPanel();
+        vscode.window.setStatusBarMessage(
+            isPreset
+                ? `BIOS Buddy: "${cur.label}" removed — click the grey row to put it back`
+                : `BIOS Buddy: "${cur.label}" removed`,
+            4000);
+    }
+}
+
+/** Put back a preset that was removed, or that vanished entirely from older settings */
+export async function restoreVcsAction(arg?: unknown): Promise<void> {
+    const target = vcsTargetOf(arg);
+    if (!target) return;
+    const cfg = vscode.workspace.getConfiguration('biosBuddy');
+    const list = getVcsActions(cfg, target.tool);
+    const defaults = defaultActions(target.tool, vcsDefaultLabels(cfg, target.tool));
+    const id = target.action.id;
+
+    let next: VcsAction[];
+    if (findAction(list, id)) {
+        next = restoreAction(list, id);
+    } else {
+        const d = findAction(defaults, id);
+        if (!d) return;                                  // Not a preset and already gone: nothing to restore
+        next = insertPreset(list, d, target.tool);
+    }
+    if (!saveVcsActions(target.tool, next)) return;
+
+    // If the id was dropped from the order table, re-insert it where the presets belong
+    const order = getItemOrder(cfg);
+    const g = vcsGroupOf(target.tool);
+    if (!order[g].includes(id)) {
+        const presets = presetIds(target.tool);
+        const mine = presets.indexOf(id);
+        const at = order[g].findIndex(x => presets.indexOf(x) > mine && mine >= 0);
+        order[g] = [...order[g]];
+        order[g].splice(at < 0 ? order[g].length : at, 0, id);
+        writeWorkspaceSetting('biosBuddy.itemOrder', order);
+    }
+    refreshPanel();
+    const label = findAction(next, id)?.label ?? id;
+    vscode.window.setStatusBarMessage(`BIOS Buddy: "${label}" is back`, 3000);
+}
+
+export async function restoreVcsDefaults(arg?: unknown): Promise<void> {
+    const tool = vcsToolOfArg(arg) ?? await pickVcsTool('Restore defaults for…');
+    if (!tool) return;
+    const cfg = vscode.workspace.getConfiguration('biosBuddy');
+    const defaults = defaultActions(tool, vcsDefaultLabels(cfg, tool));
+
+    const pick = await vscode.window.showWarningMessage(
+        `Restore the default ${vcsLabelOf(tool)} actions?`,
+        {
+            modal: true,
+            detail: 'Custom actions in this group are removed and the two presets get their original commands back:\n'
+                + defaults.map(a => `  ${a.label}`).join('\n'),
+        },
+        'Restore',
+    );
+    if (pick !== 'Restore') return;
+
+    // Delete the setting outright instead of writing a default, so future default changes still reach it
+    const ok = removeWorkspaceSetting(`biosBuddy.${vcsSettingKey(tool)}`);
+    const order = getItemOrder(cfg);
+    order[vcsGroupOf(tool)] = [...DEFAULT_ITEM_ORDER[vcsGroupOf(tool)]];
+    writeWorkspaceSetting('biosBuddy.itemOrder', order);
+    if (ok) {
+        refreshPanel();
+        vscode.window.setStatusBarMessage(`BIOS Buddy: ${vcsLabelOf(tool)} actions restored to default`, 3000);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Build rows: run, add a row, change the script, remove
+// ---------------------------------------------------------------------------
+
+async function runBuildTarget(arg?: unknown): Promise<void> {
+    const cfg = vscode.workspace.getConfiguration('biosBuddy');
+    let target = buildTargetOf(arg);
+
+    // Invoked from the palette with no argument: list every build row and let the user pick
+    if (!target) {
+        const items = visibleBuilds(getBuilds(cfg)).map(b => ({
+            label: b.label,
+            description: b.script ? path.basename(b.script) : '(no script)',
+            detail: resolvePath(b.script) || undefined,
+            target: b,
+        }));
+        const picked = await vscode.window.showQuickPick(items, {
+            title: 'Run a build',
+            placeHolder: 'Pick a build row',
+            ignoreFocusOut: true,
+        });
+        if (!picked) return;
+        target = picked.target;
+    }
+    await runBuild(target);
+}
+
+/** Pick a script file; paths inside the workspace are stored as ${workspaceFolder}/… */
+async function pickBuildScript(title: string, current: string): Promise<string | undefined> {
+    const existing = resolvePath(current);
+    const uris = await vscode.window.showOpenDialog({
+        canSelectFiles: true,
+        canSelectFolders: false,
+        canSelectMany: false,
+        filters: { 'Build scripts': ['bat', 'cmd', 'ps1'], 'All files': ['*'] },
+        defaultUri: existing ? vscode.Uri.file(path.dirname(existing)) : getConfigFolder('buildBat'),
+        title,
+    });
+    if (!uris || uris.length === 0) return undefined;
+
+    let rawPath = uris[0].fsPath;
+    const ws = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (ws && rawPath.toLowerCase().startsWith(ws.toLowerCase())) {
+        rawPath = '${workspaceFolder}' + rawPath.substring(ws.length);
+    }
+    return rawPath;
+}
+
+export async function configureBuildScript(arg?: unknown): Promise<void> {
+    const cfg = vscode.workspace.getConfiguration('biosBuddy');
+    const target = buildTargetOf(arg) ?? presetBuild(cfg);
+    const script = await pickBuildScript(`Build script — ${displayLabel(target)}`, target.script);
+    if (!script) return;
+
+    // The name follows the script: keep a manual rename, otherwise take the new .bat file name
+    const renamed = target.renamed === true;
+    const nextLabel = renamed && target.label.trim() ? target.label.trim() : scriptLabel(script);
+
+    const list = getBuilds(cfg);
+    if (!updateBuild({ script, label: nextLabel, renamed }, list, target.id)) return;
+    refreshPanel();
+    vscode.window.setStatusBarMessage(
+        `BIOS Buddy: "${nextLabel}" → ${script}`,
+        4000,
+    );
+}
+
+/** Script candidates: the version file's folder, the current script's folder, the workspace root — that level only */
+function scriptCandidates(cfg: vscode.WorkspaceConfiguration): string[] {
+    const dirs: string[] = [];
+    const def = resolvePath(cfg.get<string>('defFile', '') || '');
+    if (def) dirs.push(path.dirname(def));
+    const bat = resolvePath(cfg.get<string>('buildBat', '') || '');
+    if (bat) dirs.push(path.dirname(bat));
+    const ws = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (ws) dirs.push(ws);
+
+    const out: string[] = [];
+    for (const d of dirs) {
+        let entries: fs.Dirent[];
+        try {
+            entries = fs.readdirSync(d, { withFileTypes: true });
+        } catch {
+            continue;
+        }
+        for (const e of entries) {
+            if (!e.isFile() || !/\.(bat|cmd|ps1)$/i.test(e.name)) continue;
+            const full = path.join(d, e.name);
+            if (!out.includes(full)) out.push(full);
+        }
+    }
+    return out.sort((a, b) => path.basename(a).localeCompare(path.basename(b)));
+}
+
+/**
+ * Pick a script: list what is around first (a BIOS project keeps its .bat next
+ * to the def), so no system dialog is needed; Browse is there for anything else.
+ */
+async function pickBuildScriptForAdd(cfg: vscode.WorkspaceConfiguration): Promise<string | undefined> {
+    type Item = vscode.QuickPickItem & { script?: string; browse?: boolean };
+    const ws = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    const found = scriptCandidates(cfg);
+    const items: Item[] = found.map(p => ({
+        label: '$(file) ' + path.basename(p),
+        description: ws && p.toLowerCase().startsWith(ws.toLowerCase()) ? p.substring(ws.length + 1) : p,
+        script: p,
+    }));
+    items.push({ label: '$(folder-opened) Browse…', description: 'pick a script anywhere on disk', browse: true });
+
+    const picked = await vscode.window.showQuickPick<Item>(items, {
+        title: 'Add a build — pick its script',
+        placeHolder: found.length
+            ? `${found.length} script(s) next to your BIOS version file`
+            : 'No .bat next to the version file — choose Browse…',
+        ignoreFocusOut: true,
+    });
+    if (!picked) return undefined;
+    return picked.browse ? pickBuildScript('Add a build — pick its script', '') : picked.script;
+}
+
+export async function addBuild(): Promise<void> {
+    try {
+        const cfg = vscode.workspace.getConfiguration('biosBuddy');
+        const script = await pickBuildScriptForAdd(cfg);
+        if (!script) return;
+
+        // Name it after the script — no input box, nothing pinned, so a later .bat swap renames it
+        const name = scriptLabel(script);
+
+        const list = getBuilds(cfg);
+        const id = makeBuildId(list);
+        list.push({ id, label: name, script, custom: true });
+        if (!saveBuilds(list)) return;
+
+        // Read it back after writing: say so when the setting did not land, instead of "clicked and nothing happened"
+        if (!getBuilds(cfg).some(b => b.id === id)) {
+            vscode.window.showErrorMessage(
+                `BIOS Buddy: could not save the new build row to ${workspaceSettingsPath() ?? '(no workspace folder)'}. `
+                + 'Check that the file is writable.',
+            );
+            return;
+        }
+
+        // Register the new row at the end of the order table; it can be dragged later
+        const order = getItemOrder(cfg);
+        if (!order.actions.includes(id)) {
+            order.actions.push(id);
+            writeWorkspaceSetting('biosBuddy.itemOrder', order);
+        }
+        refreshPanel();
+        vscode.window.setStatusBarMessage(`BIOS Buddy: build "${name}" added`, 4000);
+    } catch (e) {
+        // Any thrown error has to surface, otherwise the UI just seems to ignore the click
+        vscode.window.showErrorMessage(`BIOS Buddy: add build failed — ${(e as Error).message}`);
+    }
+}
+
+export async function renameBuild(arg?: unknown): Promise<void> {
+    const target = buildTargetOf(arg);
+    if (!target) return;
+    const cfg = vscode.workspace.getConfiguration('biosBuddy');
+    const stem = scriptLabel(resolvePath(target.script));
+
+    const name = await vscode.window.showInputBox({
+        title: 'Rename build',
+        prompt: stem
+            ? `Name shown in the panel — clear it (or type "${stem}") to follow the script name again`
+            : 'Name shown in the panel',
+        value: displayLabel(target),
+        ignoreFocusOut: true,
+    });
+    if (name === undefined) return;
+
+    // Show whatever was typed; empty or exactly the script name means "follow the .bat" again
+    const trimmed = name.trim();
+    const renamed = !!trimmed && trimmed !== stem;
+
+    const list = getBuilds(cfg);
+    if (!updateBuild({ label: renamed ? trimmed : stem, renamed }, list, target.id)) return;
+    refreshPanel();
+}
+
+export async function setBuildArgs(arg?: unknown): Promise<void> {
+    const target = buildTargetOf(arg);
+    if (!target) return;
+    const cfg = vscode.workspace.getConfiguration('biosBuddy');
+
+    const args = await vscode.window.showInputBox({
+        title: `Arguments — ${displayLabel(target)}`,
+        prompt: 'Appended to the script command. Leave empty for none.',
+        value: target.args ?? '',
+        ignoreFocusOut: true,
+    });
+    if (args === undefined) return;
+
+    const list = getBuilds(cfg);
+    if (!updateBuild({ args: args.trim() }, list, target.id)) return;
+    refreshPanel();
+}
+
+export async function deleteBuild(arg?: unknown): Promise<void> {
+    const target = buildTargetOf(arg);
+    if (!target) return;
+    const cfg = vscode.workspace.getConfiguration('biosBuddy');
+    const list = getBuilds(cfg);
+    const cur = findBuild(list, target.id) ?? target;
+    const isPreset = cur.id === PRESET_BUILD_ID;
+
+    const pick = await vscode.window.showWarningMessage(
+        `Remove the build row "${displayLabel(cur)}"?`,
+        {
+            modal: true,
+            detail: isPreset
+                ? 'This is the default build, so it is only hidden: a grey "removed" row stays at the bottom and puts it back with one click. The script setting is kept.'
+                : 'Only the row is removed — the script file itself is untouched, and buildBat is not affected.',
+        },
+        'Remove',
+    );
+    if (pick !== 'Remove') return;
+
+    if (!saveBuilds(removeBuild(list, cur.id))) return;
+    if (!isPreset) {
+        // Clear it from the order table too, so no junk ids stay behind in settings
+        const order = getItemOrder(cfg);
+        order.actions = order.actions.filter(id => id !== cur.id);
+        writeWorkspaceSetting('biosBuddy.itemOrder', order);
+    }
+    refreshPanel();
+    vscode.window.setStatusBarMessage(
+        isPreset
+            ? `BIOS Buddy: "${displayLabel(cur)}" removed — click the grey row to put it back`
+            : `BIOS Buddy: "${displayLabel(cur)}" removed`,
+        4000);
+}
+
+export async function restoreBuildTarget(arg?: unknown): Promise<void> {
+    const target = buildTargetOf(arg);
+    if (!target) return;
+    const cfg = vscode.workspace.getConfiguration('biosBuddy');
+    const list = getBuilds(cfg);
+    if (!saveBuilds(restoreBuild(list, target.id))) return;
+
+    const order = getItemOrder(cfg);
+    if (!order.actions.includes(target.id)) {
+        order.actions.push(target.id);
+        writeWorkspaceSetting('biosBuddy.itemOrder', order);
+    }
+    refreshPanel();
+    vscode.window.setStatusBarMessage(`BIOS Buddy: "${displayLabel(target)}" is back`, 3000);
+}
+
+export async function restoreBuildDefaults(): Promise<void> {
+    const cfg = vscode.workspace.getConfiguration('biosBuddy');
+    const pick = await vscode.window.showWarningMessage(
+        'Restore the default build rows?',
+        {
+            modal: true,
+            detail: 'Self-added build rows are removed and the default build row comes back.\n'
+                + 'The build script / arguments settings are kept as they are.',
+        },
+        'Restore',
+    );
+    if (pick !== 'Restore') return;
+
+    removeWorkspaceSetting('biosBuddy.builds');
+    const order = getItemOrder(cfg);
+    order.actions = [...DEFAULT_ITEM_ORDER.actions];
+    writeWorkspaceSetting('biosBuddy.itemOrder', order);
+    refreshPanel();
+    vscode.window.setStatusBarMessage('BIOS Buddy: build rows restored to default', 3000);
+}
+
+/**
+ * Title-bar reset. Dropping the saved order is enough: every group falls back to
+ * DEFAULT_ITEM_ORDER, so Tools reads GUID Assistant → COM → Binary → Text again and each
+ * group gets its preset rows first. Only the order is touched — hidden rows, renames and
+ * self-added builds stay exactly as they are.
+ */
+export function resetItemOrder(): void {
+    if (!removeWorkspaceSetting('biosBuddy.itemOrder')) return;
+    refreshPanel();
+    vscode.window.setStatusBarMessage('BIOS Buddy: default order restored', 3000);
 }
 
 // ---------------------------------------------------------------------------
@@ -565,35 +1728,229 @@ class BiosPanelProvider implements vscode.TreeDataProvider<ElementKind>,
 
 let panelProvider: BiosPanelProvider;
 
+// ---------------------------------------------------------------------------
+// Sidebar one-click collapse / expand
+// ---------------------------------------------------------------------------
+const PANEL_VIEW_ID = 'biosBuddy.panel';
+const TOP_GROUPS = PANEL_GROUPS;
+
+let panelTree: vscode.TreeView<ElementKind> | undefined;
+// Which groups are open right now (kept in sync with clicks); the title-bar button uses it to pick collapse or expand
+const openGroups = new Set<string>(TOP_GROUPS);
+
+function syncTreeToggleKey() {
+    void vscode.commands.executeCommand('setContext', 'biosTreeOpen', openGroups.size > 0);
+}
+
+async function expandOneGroup(view: vscode.TreeView<ElementKind>, id: string): Promise<boolean> {
+    const node = groupElement(id);
+    if (!node) return false;
+    try {
+        // reveal + expand is the only official way to open a tree view; the node objects must be the same instances
+        await view.reveal(node, { expand: true, select: false, focus: false });
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+async function setGroupsExpanded(open: boolean) {
+    if (!panelTree) return;
+    if (open) {
+        // Clear the "collapse everything" flag before expanding, or the redraw closes them again
+        panelProvider.forceCollapse(false);
+        await new Promise(resolve => setTimeout(resolve, 0));   // Let that redraw land first
+        openGroups.clear();
+        let failed = 0;
+        for (const id of TOP_GROUPS) {
+            let ok = await expandOneGroup(panelTree, id);
+            if (!ok) {
+                // The first attempt fails while the view is still showing or the sidebar is not ready — wait a frame and retry
+                await new Promise(resolve => setTimeout(resolve, 60));
+                ok = await expandOneGroup(panelTree, id);
+            }
+            if (ok) openGroups.add(id); else failed++;
+        }
+        // None of the five worked: clear the flags and redraw once so at least the icon matches reality
+        if (failed === TOP_GROUPS.length) panelProvider.refresh();
+    } else {
+        openGroups.clear();
+        // The tree view has no collapse API, so use VS Code's own Collapse All command
+        try {
+            await vscode.commands.executeCommand(`workbench.actions.treeView.${PANEL_VIEW_ID}.collapseAll`);
+        } catch { /* Version differences — fall back to the provider approach below */ }
+        panelProvider.forceCollapse(true);
+    }
+    syncTreeToggleKey();
+}
+
+// ---------------------------------------------------------------------------
+// Rename migration: before 0.11.0 the extension was bios-build-assistant, with biosBuildAssistant.* commands and settings
+// Move the old settings over to biosBuddy.* unchanged and delete the old keys — no reconfiguration needed.
+// ---------------------------------------------------------------------------
+const LEGACY_SECTION = 'biosBuildAssistant';
+const CURRENT_SECTION = 'biosBuddy';
+
+/** Workspace keys are edited in the file itself, which is the most reliable: what is written is what the user sees */
+function migrateLegacyWorkspaceSettings(): void {
+    const p = workspaceSettingsPath();
+    if (!p || !fs.existsSync(p)) return;
+    try {
+        const raw = fs.readFileSync(p, 'utf-8').replace(/^\uFEFF/, '');
+        if (!raw.trim()) return;
+        const obj = JSON.parse(raw) as Record<string, unknown>;
+        if (!obj || typeof obj !== 'object') return;
+        let changed = false;
+        for (const key of Object.keys(obj)) {
+            if (!key.startsWith(LEGACY_SECTION + '.')) continue;
+            const next = CURRENT_SECTION + key.slice(LEGACY_SECTION.length);
+            if (obj[next] === undefined) obj[next] = obj[key];
+            delete obj[key];
+            changed = true;
+        }
+        if (changed) fs.writeFileSync(p, JSON.stringify(obj, null, 4) + '\n', 'utf-8');
+    } catch { /* A failed migration must not block activation */ }
+}
+
+/** Global and multi-root folder-level keys of the same name go through the configuration API */
+function migrateLegacyGlobalSettings(): void {
+    try {
+        const contributes = extCtx?.extension?.packageJSON?.contributes?.configuration;
+        const blocks = Array.isArray(contributes) ? contributes : [contributes];
+        const keys: string[] = [];
+        for (const block of blocks) {
+            const props = (block as { properties?: Record<string, unknown> } | undefined)?.properties;
+            for (const key of Object.keys(props ?? {})) {
+                if (key.startsWith(CURRENT_SECTION + '.')) keys.push(key);
+            }
+        }
+        for (const key of keys) {
+            const oldKey = LEGACY_SECTION + key.slice(CURRENT_SECTION.length);
+            const from = vscode.workspace.getConfiguration().inspect(oldKey);
+            if (!from) continue;
+            const to = vscode.workspace.getConfiguration().inspect(key);
+            const scopes: Array<[vscode.ConfigurationTarget, 'globalValue' | 'workspaceFolderValue']> = [
+                [vscode.ConfigurationTarget.Global, 'globalValue'],
+                [vscode.ConfigurationTarget.WorkspaceFolder, 'workspaceFolderValue'],
+            ];
+            for (const [target, field] of scopes) {
+                const value = from[field];
+                if (value === undefined) continue;
+                const quiet = (p: Thenable<unknown>) => {
+                    try { void Promise.resolve(p).catch(() => { /* An unregistered section refuses the write — ignore it */ }); }
+                    catch { /* A synchronous throw is skipped the same way */ }
+                };
+                try {
+                    if (to?.[field] === undefined) {
+                        quiet(vscode.workspace.getConfiguration().update(key, value, target));
+                    }
+                    quiet(vscode.workspace.getConfiguration().update(oldKey, undefined, target));
+                } catch { /* Skip a single key that fails */ }
+            }
+        }
+    } catch { /* Same as above */ }
+}
+
 export function activate(context: vscode.ExtensionContext) {
-    panelProvider = new BiosPanelProvider();
+    extCtx = context;
+
+    // Migrate the old names first, then mirror, and only then restore what Clean deleted
+    migrateLegacyWorkspaceSettings();
+    migrateLegacyGlobalSettings();
+
+    // Mirror the current settings first (even a first install needs a copy), then decide what to restore.
+    // Scenario: Clean just deleted .vscode/settings.json and the window reloaded — restore it here,
+    // so nobody has to pick the def / bat again.
+    mirrorOwnedSettings();
+    migrateAutoBuildLabel();
+    const restored = restoreOwnedFromMirror();
+    if (restored.length) {
+        vscode.window.setStatusBarMessage(
+            `BIOS Buddy: restored ${restored.length} setting(s) removed from .vscode/settings.json`,
+            10000,
+        );
+    }
+
+    panelProvider = new BiosPanelProvider(context);
+    registerBinaryEditor(context);
+    registerSerialConsole(context);
+    registerTextCompare(context);
+    registerGuidTool(context);
 
     context.subscriptions.push(
-        vscode.window.registerTreeDataProvider('biosBuildAssistant.panel', panelProvider),
-        vscode.commands.registerCommand('biosBuildAssistant.incrementAndBuild', () => run(true)),
-        vscode.commands.registerCommand('biosBuildAssistant.testBuild',        () => runTestBuild()),
-        vscode.commands.registerCommand('biosBuildAssistant.buildOnly',       () => buildOnly()),
-        vscode.commands.registerCommand('biosBuildAssistant.reselectBuildFields', (mode?: 'formalBuildFields' | 'testBuildFields') => reselectBuildFields(mode)),
-        vscode.commands.registerCommand('biosBuildAssistant.svnUpdate',       () => runSvnCommands(['svn update'])),
-        vscode.commands.registerCommand('biosBuildAssistant.svnCleanRevert',  () => runSvnCommands([
-            'svn cleanup .',
-            'svn revert -R .',
-            'svn cleanup --remove-unversioned .',
-            'svn status .',
-        ])),
-        vscode.commands.registerCommand('biosBuildAssistant.configurePaths',  () => configurePaths()),
-        vscode.commands.registerCommand('biosBuildAssistant.configureDefFile', () => configurePath('defFile')),
-        vscode.commands.registerCommand('biosBuildAssistant.configureBuildBat', () => configurePath('buildBat')),
-        vscode.commands.registerCommand('biosBuildAssistant.addInfoField',    () => addInfoField()),
-        vscode.commands.registerCommand('biosBuildAssistant.resetInfoFields', () => resetInfoFields()),
-        vscode.commands.registerCommand('biosBuildAssistant.removeInfoField', (el?: ElementKind) => removeInfoField(el)),
-        vscode.commands.registerCommand('biosBuildAssistant.moveItemUp',   (el?: ElementKind) => moveItem(el, -1)),
-        vscode.commands.registerCommand('biosBuildAssistant.moveItemDown', (el?: ElementKind) => moveItem(el, 1)),
-        vscode.commands.registerCommand('biosBuildAssistant.refresh',          () => panelProvider.refresh()),
+        panelTree = vscode.window.createTreeView(PANEL_VIEW_ID, {
+            treeDataProvider: panelProvider,
+            dragAndDropController: panelProvider,
+            showCollapseAll: false,          // The built-in collapse-all duplicates our button, so turn it off
+        }),
+        vscode.commands.registerCommand('biosBuddy.expandAll',   () => setGroupsExpanded(true)),
+        vscode.commands.registerCommand('biosBuddy.collapseAll', () => setGroupsExpanded(false)),
+        vscode.commands.registerCommand('biosBuddy.formalVersion',   () => runFormalVersion()),
+        vscode.commands.registerCommand('biosBuddy.testVersion',     () => runTestVersion()),
+        vscode.commands.registerCommand('biosBuddy.runBuildTarget',  (arg?: unknown) => runBuildTarget(arg)),
+        vscode.commands.registerCommand('biosBuddy.buildOnly',       () => runBuildTarget({ target: presetBuild(vscode.workspace.getConfiguration('biosBuddy')) })),
+        vscode.commands.registerCommand('biosBuddy.addBuild',        () => addBuild()),
+        vscode.commands.registerCommand('biosBuddy.configureBuildScript', (arg?: unknown) => configureBuildScript(arg)),
+        vscode.commands.registerCommand('biosBuddy.renameBuild',     (arg?: unknown) => renameBuild(arg)),
+        vscode.commands.registerCommand('biosBuddy.setBuildArgs',    (arg?: unknown) => setBuildArgs(arg)),
+        vscode.commands.registerCommand('biosBuddy.deleteBuild',     (arg?: unknown) => deleteBuild(arg)),
+        vscode.commands.registerCommand('biosBuddy.restoreBuild',    (arg?: unknown) => restoreBuildTarget(arg)),
+        vscode.commands.registerCommand('biosBuddy.restoreBuildDefaults', () => restoreBuildDefaults()),
+        vscode.commands.registerCommand('biosBuddy.reselectBuildFields', (mode?: 'formalBuildFields' | 'testBuildFields') => reselectBuildFields(mode)),
+        vscode.commands.registerCommand('biosBuddy.svnUpdate',       () => runVcsActionById('svn', 'svnUpdate')),
+        vscode.commands.registerCommand('biosBuddy.svnCleanRevert',  () => runVcsActionById('svn', 'svnCleanRevert')),
+        vscode.commands.registerCommand('biosBuddy.gitUpdate',       () => runVcsActionById('git', 'gitUpdate')),
+        vscode.commands.registerCommand('biosBuddy.gitResetClean',   () => runVcsActionById('git', 'gitResetClean')),
+        // SVN and Git buttons are split per group so the tooltip reads "Edit SVN Command", not "Edit SVN / Git Command"
+        vscode.commands.registerCommand('biosBuddy.runVcsAction',      (arg?: unknown) => runVcsAction(arg)),
+        vscode.commands.registerCommand('biosBuddy.runSvnAction',      (arg?: unknown) => runVcsAction(arg, 'svn')),
+        vscode.commands.registerCommand('biosBuddy.runGitAction',      (arg?: unknown) => runVcsAction(arg, 'git')),
+        vscode.commands.registerCommand('biosBuddy.addSvnAction',      (arg?: unknown) => addVcsAction(arg ?? { tool: 'svn' })),
+        vscode.commands.registerCommand('biosBuddy.addGitAction',      (arg?: unknown) => addVcsAction(arg ?? { tool: 'git' })),
+        vscode.commands.registerCommand('biosBuddy.editSvnAction',     (arg?: unknown) => editVcsAction(arg)),
+        vscode.commands.registerCommand('biosBuddy.editGitAction',     (arg?: unknown) => editVcsAction(arg)),
+        vscode.commands.registerCommand('biosBuddy.renameSvnAction',   (arg?: unknown) => renameVcsAction(arg)),
+        vscode.commands.registerCommand('biosBuddy.renameGitAction',   (arg?: unknown) => renameVcsAction(arg)),
+        vscode.commands.registerCommand('biosBuddy.resetVcsAction',    (arg?: unknown) => resetVcsAction(arg)),
+        vscode.commands.registerCommand('biosBuddy.deleteSvnAction',   (arg?: unknown) => deleteVcsAction(arg)),
+        vscode.commands.registerCommand('biosBuddy.deleteGitAction',   (arg?: unknown) => deleteVcsAction(arg)),
+        vscode.commands.registerCommand('biosBuddy.restoreSvnAction',  (arg?: unknown) => restoreVcsAction(arg)),
+        vscode.commands.registerCommand('biosBuddy.restoreGitAction',  (arg?: unknown) => restoreVcsAction(arg)),
+        vscode.commands.registerCommand('biosBuddy.restoreSvnDefaults', (arg?: unknown) => restoreVcsDefaults(arg ?? { tool: 'svn' })),
+        vscode.commands.registerCommand('biosBuddy.restoreGitDefaults', (arg?: unknown) => restoreVcsDefaults(arg ?? { tool: 'git' })),
+        vscode.commands.registerCommand('biosBuddy.configurePaths',  () => configurePaths()),
+        vscode.commands.registerCommand('biosBuddy.configureDefFile', () => configureDefFile()),
+        vscode.commands.registerCommand('biosBuddy.configureBuildBat', (arg?: unknown) => configureBuildScript(arg)),
+        vscode.commands.registerCommand('biosBuddy.addInfoField',    () => addInfoField()),
+        vscode.commands.registerCommand('biosBuddy.resetInfoFields', () => resetInfoFields()),
+        vscode.commands.registerCommand('biosBuddy.removeInfoField', (el?: ElementKind) => removeInfoField(el)),
+        vscode.commands.registerCommand('biosBuddy.moveItemUp',   (el?: ElementKind) => moveItem(el, -1)),
+        vscode.commands.registerCommand('biosBuddy.moveItemDown', (el?: ElementKind) => moveItem(el, 1)),
+        vscode.commands.registerCommand('biosBuddy.refresh',          () => panelProvider.refresh()),
+        vscode.commands.registerCommand('biosBuddy.resetOrder',       () => resetItemOrder()),
         vscode.workspace.onDidChangeConfiguration(e => {
-            if (e.affectsConfiguration('biosBuildAssistant')) panelProvider.refresh();
+            if (e.affectsConfiguration('biosBuddy')) panelProvider.refresh();
         }),
     );
+
+    // Keep the collapse-all / expand-all button in sync with manual clicks
+    if (panelTree) {
+        const view = panelTree;
+        context.subscriptions.push(
+            view.onDidExpandElement(e => {
+                if (e.element.kind !== 'group') return;
+                openGroups.add(e.element.id);
+                if (panelProvider.collapsingAll) panelProvider.clearCollapsedFlag();
+                syncTreeToggleKey();
+            }),
+            view.onDidCollapseElement(e => {
+                if (e.element.kind !== 'group') return;
+                openGroups.delete(e.element.id);
+                syncTreeToggleKey();
+            }),
+        );
+    }
+    syncTreeToggleKey();          // All five groups start expanded, so the button offers collapse-all
 }
 
 export function deactivate() {}
@@ -602,37 +1959,38 @@ export function deactivate() {}
 // Public entry points
 // ---------------------------------------------------------------------------
 
-async function run(thenBuild: boolean) {
-    const cfg = vscode.workspace.getConfiguration('biosBuildAssistant');
+// Formal BIOS: bump the version fields one step, no build. To compile, click a build row.
+async function runFormalVersion() {
+    const cfg = vscode.workspace.getConfiguration('biosBuddy');
     const defPath = resolvePath(cfg.get<string>('defFile', ''));
 
     if (!defPath) {
-        vscode.window.showErrorMessage('BIOS Build Assistant: BIOS Version File is is not configured.');
+        vscode.window.showErrorMessage('BIOS Buddy: BIOS Version File is is not configured.');
         return;
     }
     if (!fs.existsSync(defPath)) {
-        vscode.window.showErrorMessage(`BIOS Build Assistant: BIOS Version File is not found at:\n${defPath}`);
+        vscode.window.showErrorMessage(`BIOS Buddy: BIOS Version File is not found at:\n${defPath}`);
         return;
     }
 
     const raw = readDefFile(defPath);
     const fields = parseConfigFields(raw);
     if (fields.length === 0) {
-        vscode.window.showWarningMessage('BIOS Build Assistant: no Config fields found in file.');
+        vscode.window.showWarningMessage('BIOS Buddy: no Config fields found in file.');
         return;
     }
 
     const majorField = fields.find(f => f.key === 'BIOS_VERSION_MAJOR');
     const minorField = fields.find(f => f.key === 'BIOS_VERSION_MINOR');
     if (!majorField || !minorField) {
-        vscode.window.showErrorMessage('BIOS Build Assistant: BIOS_VERSION_MAJOR / BIOS_VERSION_MINOR not found.');
+        vscode.window.showErrorMessage('BIOS Buddy: BIOS_VERSION_MAJOR / BIOS_VERSION_MINOR not found.');
         return;
     }
 
     const curMajor = parseInt(stripValue(majorField.value), 10);
     const curMinor = parseInt(stripValue(minorField.value), 10);
     if (isNaN(curMajor) || isNaN(curMinor)) {
-        vscode.window.showErrorMessage('BIOS Build Assistant: could not parse MAJOR/MINOR as integers.');
+        vscode.window.showErrorMessage('BIOS Buddy: could not parse MAJOR/MINOR as integers.');
         return;
     }
 
@@ -658,77 +2016,73 @@ async function run(thenBuild: boolean) {
 
     const accepted = await showChangePreview(defPath, changes);
     if (!accepted) {
-        vscode.window.showInformationMessage('BIOS Build Assistant: cancelled.');
+        vscode.window.showInformationMessage('BIOS Buddy: cancelled.');
         return;
     }
 
     const newContent = applyChanges(raw, changes);
     fs.writeFileSync(defPath, newContent, 'utf-8');
     vscode.window.showInformationMessage(
-        `BIOS Build Assistant: ${changes.length} field(s) updated. MINOR ${curMinor} -> ${newMinor}.`,
+        `BIOS Buddy: ${changes.length} field(s) updated. MINOR ${curMinor} -> ${newMinor}. `
+        + 'Version only — click a build row when you want to compile.',
     );
     panelProvider.refresh();
-
-    if (thenBuild) {
-        await runBuild();
-    }
-}
-
-async function buildOnly() {
-    await runBuild();
 }
 
 async function reselectBuildFields(modeOrItem?: 'formalBuildFields' | 'testBuildFields' | ElementKind) {
-    const cfg = vscode.workspace.getConfiguration('biosBuildAssistant');
+    const cfg = vscode.workspace.getConfiguration('biosBuddy');
     const defPath = resolvePath(cfg.get<string>('defFile', ''));
     if (!defPath || !fs.existsSync(defPath)) {
-        vscode.window.showErrorMessage('BIOS Build Assistant: configure BiosVersion.def path first.');
+        vscode.window.showErrorMessage('BIOS Buddy: configure BiosVersion.def path first.');
         return;
     }
 
     const raw = readDefFile(defPath);
     const fields = parseConfigFields(raw);
     if (fields.length === 0) {
-        vscode.window.showWarningMessage('BIOS Build Assistant: no Config fields found in file.');
+        vscode.window.showWarningMessage('BIOS Buddy: no Config fields found in file.');
         return;
     }
 
     let selectedMode: 'formalBuildFields' | 'testBuildFields' | undefined;
     if (modeOrItem && typeof modeOrItem !== 'string') {
-        if (modeOrItem.kind === 'action') {
-            selectedMode = modeOrItem.id === 'incBuild' ? 'formalBuildFields' : modeOrItem.id === 'testBuild' ? 'testBuildFields' : undefined;
-        }
+        // Inline gears pass a TreeItem carrying actionId; context menus pass the element itself
+        const id = modeOrItem.kind === 'action'
+            ? modeOrItem.id
+            : (modeOrItem as { actionId?: string }).actionId;
+        selectedMode = id === 'incBuild' ? 'formalBuildFields' : id === 'testBuild' ? 'testBuildFields' : undefined;
     } else {
         selectedMode = modeOrItem;
     }
 
     if (!selectedMode) {
         const picked = await vscode.window.showQuickPick([
-            { label: 'Formal BIOS Build', value: 'formalBuildFields' as const },
-            { label: 'Test BIOS Build', value: 'testBuildFields' as const },
+            { label: 'Formal BIOS Version', value: 'formalBuildFields' as const },
+            { label: 'Test BIOS Version', value: 'testBuildFields' as const },
         ], {
-            placeHolder: 'Which build type do you want to reconfigure?',
+            placeHolder: 'Which version action do you want to reconfigure?',
         });
         selectedMode = picked?.value;
     }
     if (!selectedMode) return;
 
     const fallback = selectedMode === 'formalBuildFields' ? DEFAULT_FORMAL_BUILD_FIELDS : DEFAULT_TEST_BUILD_FIELDS;
-    await pickFieldsForBuild(cfg, selectedMode, fields, selectedMode === 'formalBuildFields' ? 'Select fields for Formal BIOS Build' : 'Select fields for Test BIOS Build', fallback, true);
+    await pickFieldsForBuild(cfg, selectedMode, fields, selectedMode === 'formalBuildFields' ? 'Select fields for Formal BIOS Version' : 'Select fields for Test BIOS Version', fallback, true);
     panelProvider.refresh();
-    vscode.window.showInformationMessage(`BIOS Build Assistant: ${selectedMode === 'formalBuildFields' ? 'Formal BIOS Build' : 'Test BIOS Build'} field selection updated.`);
+    vscode.window.showInformationMessage(`BIOS Buddy: ${selectedMode === 'formalBuildFields' ? 'Formal BIOS Version' : 'Test BIOS Version'} field selection updated.`);
 }
 
-async function runTestBuild() {
-    const cfg = vscode.workspace.getConfiguration('biosBuildAssistant');
+// Test BIOS: move the Build ID from W to T01 / T02 … and bump the version, again without building.
+async function runTestVersion() {
+    const cfg = vscode.workspace.getConfiguration('biosBuddy');
     const defPath = resolvePath(cfg.get<string>('defFile', ''));
 
     if (!defPath) {
-        vscode.window.showErrorMessage('BIOS Build Assistant: BIOS Version File is not configured.');
+        vscode.window.showErrorMessage('BIOS Buddy: BIOS Version File is not configured.');
         return;
     }
     if (!fs.existsSync(defPath)) {
-        vscode.window.showErrorMessage(`BIOS Build Assistant: BIOS Version File is not founded at:\n${defPath}`);
+        vscode.window.showErrorMessage(`BIOS Buddy: BIOS Version File is not founded at:\n${defPath}`);
         return;
     }
 
@@ -736,14 +2090,14 @@ async function runTestBuild() {
     const fields = parseConfigFields(raw);
     const bldIdField = fields.find(f => f.key === 'LENOVO_COMMON_BLD_ID');
     if (!bldIdField) {
-        vscode.window.showErrorMessage('BIOS Build Assistant: LENOVO_COMMON_BLD_ID not found.');
+        vscode.window.showErrorMessage('BIOS Buddy: LENOVO_COMMON_BLD_ID not found.');
         return;
     }
 
     const newBldId = nextTestBuildId(bldIdField.value);
     if (newBldId === null) {
         vscode.window.showErrorMessage(
-            'BIOS Build Assistant: Build ID must end with W (release) or T## (test) to switch to a TEST build.',
+            'BIOS Buddy: Build ID must end with W (release) or T## (test) to switch to a TEST build.',
         );
         return;
     }
@@ -751,14 +2105,14 @@ async function runTestBuild() {
     const majorField = fields.find(f => f.key === 'BIOS_VERSION_MAJOR');
     const minorField = fields.find(f => f.key === 'BIOS_VERSION_MINOR');
     if (!majorField || !minorField) {
-        vscode.window.showErrorMessage('BIOS Build Assistant: BIOS_VERSION_MAJOR / BIOS_VERSION_MINOR not found.');
+        vscode.window.showErrorMessage('BIOS Buddy: BIOS_VERSION_MAJOR / BIOS_VERSION_MINOR not found.');
         return;
     }
 
     const curMajor = parseInt(stripValue(majorField.value), 10);
     const curMinor = parseInt(stripValue(minorField.value), 10);
     if (isNaN(curMajor) || isNaN(curMinor)) {
-        vscode.window.showErrorMessage('BIOS Build Assistant: could not parse MAJOR/MINOR as integers.');
+        vscode.window.showErrorMessage('BIOS Buddy: could not parse MAJOR/MINOR as integers.');
         return;
     }
 
@@ -776,82 +2130,56 @@ async function runTestBuild() {
         cfg,
         'testBuildFields',
         fields,
-        'Select fields for Test BIOS Build',
+        'Select fields for Test BIOS Version',
         DEFAULT_TEST_BUILD_FIELDS,
         false,
     );
 
-    const changes = computeAllChanges(fields, curMajor, curMinor, newMajor, newMinor, newDate, selected);
+    let changes = computeAllChanges(fields, curMajor, curMinor, newMajor, newMinor, newDate, selected);
     const selectedBld = selected.has('LENOVO_COMMON_BLD_ID');
     if (selectedBld) {
-        const f = fields.find(x => x.key === 'LENOVO_COMMON_BLD_ID');
-        if (f) {
-            changes.push({ field: f, oldRaw: f.value, newRaw: newBldId, reason: 'test build id' });
+        // One BLD_ID may exist under both #ifdef and #else, so each copy is handled in turn:
+        // the first follows W->T01 / T01->T02; a second copy written differently just gets its trailing number +1.
+        changes = changes.filter(c => c.field.key !== 'LENOVO_COMMON_BLD_ID');
+        for (const f of fields.filter(x => x.key === 'LENOVO_COMMON_BLD_ID')) {
+            const next = nextTestBuildId(f.value) ?? bumpLastNumber(f.value, 1);
+            if (next !== null) {
+                changes.push({ field: f, oldRaw: f.value, newRaw: next, reason: 'test build id' });
+            }
         }
     }
 
-    const dedup = new Map<string, FieldChange>();
-    for (const c of changes) dedup.set(c.field.key, c);
-    const finalChanges = [...dedup.values()];
+    const finalChanges = changes;
 
     if (finalChanges.length === 0) {
-        vscode.window.showInformationMessage('BIOS Build Assistant: no changes needed.');
+        vscode.window.showInformationMessage('BIOS Buddy: no changes needed.');
         return;
     }
 
     const accepted = await showChangePreview(defPath, finalChanges);
     if (!accepted) {
-        vscode.window.showInformationMessage('BIOS Build Assistant: cancelled.');
+        vscode.window.showInformationMessage('BIOS Buddy: cancelled.');
         return;
     }
 
     fs.writeFileSync(defPath, applyChanges(raw, finalChanges), 'utf-8');
     const cleanId = newBldId.replace(/[\\"]/g, '').trim();
     vscode.window.showInformationMessage(
-        `BIOS Build Assistant: TEST BIOS build id -> ${cleanId}. ${finalChanges.length} field(s) updated.`,
+        `BIOS Buddy: TEST BIOS build id -> ${cleanId}. ${finalChanges.length} field(s) updated. `
+        + 'Version only — click a build row when you want to compile.',
     );
     panelProvider.refresh();
-    await runBuild();
 }
 
-function runSvnCommands(commands: string[]) {
-    const cwd = resolveSvnCwd();
-    if (!cwd) {
-        vscode.window.showErrorMessage('BIOS Build Assistant: no workspace folder for SVN commands.');
-        return;
-    }
-    const terminal = vscode.window.createTerminal({ name: 'BIOS SVN', cwd });
-    terminal.show(true);
-    for (const cmd of commands) {
-        terminal.sendText(cmd);
-    }
-}
-
-function resolveSvnCwd(): string {
-    const ws = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-    if (ws) return ws;
-    const cfg = vscode.workspace.getConfiguration('biosBuildAssistant');
-    const defPath = resolvePath(cfg.get<string>('defFile', ''));
-    if (defPath && fs.existsSync(defPath)) return path.dirname(defPath);
-    const batPath = resolvePath(cfg.get<string>('buildBat', ''));
-    if (batPath && fs.existsSync(batPath)) return path.dirname(batPath);
-    return '';
-}
-
-async function configurePath(key: 'defFile' | 'buildBat') {
-    const label = key === 'defFile' ? 'Bios Version File' : 'Build Script';
-    const filters: Record<string, string[]> = key === 'defFile'
-        ? { 'Config files': ['def'], 'All files': ['*'] }
-        : { 'Batch files': ['bat', 'cmd'], 'All files': ['*'] };
-
-    const defaultUri = getConfigFolder(key);
+async function configureDefFile() {
+    const defaultUri = getConfigFolder('defFile');
     const uris = await vscode.window.showOpenDialog({
         canSelectFiles: true,
         canSelectFolders: false,
         canSelectMany: false,
-        filters,
+        filters: { 'Config files': ['def'], 'All files': ['*'] },
         defaultUri,
-        title: `Select ${label}`,
+        title: 'Select Bios Version File',
     });
     if (!uris || uris.length === 0) return;
 
@@ -861,27 +2189,27 @@ async function configurePath(key: 'defFile' | 'buildBat') {
         rawPath = '${workspaceFolder}' + rawPath.substring(ws.length);
     }
 
-    const configKey = `biosBuildAssistant.${key}`;
-    const ok = writeWorkspaceSetting(configKey, rawPath);
-    if (!ok) return;
+    if (!writeWorkspaceSetting('biosBuddy.defFile', rawPath)) return;
 
     panelProvider.refresh();
-    vscode.window.showInformationMessage(`BIOS Build Assistant: ${label} set to ${rawPath}`);
+    vscode.window.showInformationMessage(`BIOS Buddy: BIOS version file set to ${rawPath}`);
 }
 
 async function configurePaths() {
+    // Both sections are reachable from the panel now, so this is just a Command Palette entry
     const choice = await vscode.window.showQuickPick([
-        { label: 'Bios Version File', key: 'defFile' },
-        { label: 'Build Script',      key: 'buildBat' },
+        { label: 'BIOS Version File', description: 'BIOS Current Info 的第一行', key: 'defFile' },
+        { label: 'Build Script',      description: '默认那一行 Build 用的脚本', key: 'buildBat' },
     ], {
-        placeHolder: 'Choose which BIOS version file is path or build script file path to configure',
+        placeHolder: 'What do you want to configure?',
     });
     if (!choice) return;
-    await configurePath(choice.key as 'defFile' | 'buildBat');
+    if (choice.key === 'defFile') return configureDefFile();
+    return configureBuildScript();
 }
 
 function getConfigFolder(key: string): vscode.Uri | undefined {
-    const cfg = vscode.workspace.getConfiguration('biosBuildAssistant');
+    const cfg = vscode.workspace.getConfiguration('biosBuddy');
     const existing = resolvePath(cfg.get<string>(key, ''));
     if (existing) {
         const dir = fs.existsSync(existing) && fs.statSync(existing).isDirectory()
@@ -898,10 +2226,10 @@ function getConfigFolder(key: string): vscode.Uri | undefined {
 // ---------------------------------------------------------------------------
 
 async function addInfoField() {
-    const cfg = vscode.workspace.getConfiguration('biosBuildAssistant');
+    const cfg = vscode.workspace.getConfiguration('biosBuddy');
     const defPath = resolvePath(cfg.get<string>('defFile', ''));
     if (!defPath || !fs.existsSync(defPath)) {
-        vscode.window.showErrorMessage('BIOS Build Assistant: configure BiosVersion.def path first.');
+        vscode.window.showErrorMessage('BIOS Buddy: configure BiosVersion.def path first.');
         return;
     }
 
@@ -926,7 +2254,7 @@ async function addInfoField() {
     }
 
     if (items.length === 0) {
-        vscode.window.showInformationMessage('BIOS Build Assistant: every available field is already shown.');
+        vscode.window.showInformationMessage('BIOS Buddy: every available field is already shown.');
         return;
     }
 
@@ -943,14 +2271,14 @@ async function addInfoField() {
 
 async function removeInfoField(element?: ElementKind) {
     if (!element || element.kind !== 'info' || !element.cfgKey) return;
-    const cfg = vscode.workspace.getConfiguration('biosBuildAssistant');
+    const cfg = vscode.workspace.getConfiguration('biosBuddy');
     const list = getInfoFields(cfg).filter(e => e.key !== element.cfgKey);
     if (!await saveInfoFields(cfg, list)) return;
     panelProvider.refresh();
 }
 
 async function resetInfoFields() {
-    const cfg = vscode.workspace.getConfiguration('biosBuildAssistant');
+    const cfg = vscode.workspace.getConfiguration('biosBuddy');
     const pick = await vscode.window.showWarningMessage(
         'Reset "BIOS Current Info" fields to the default set and order?',
         { modal: true },
@@ -963,15 +2291,17 @@ async function resetInfoFields() {
 }
 
 // Right-click "Move Up / Move Down" counterpart to drag-and-drop reordering.
-async function moveItem(element: ElementKind | undefined, dir: -1 | 1): Promise<void> {
+export async function moveItem(element: ElementKind | undefined, dir: -1 | 1): Promise<void> {
     if (!element) return;
     let id: string | undefined;
     let group: string | undefined;
     if (element.kind === 'action') { id = element.id; group = element.dndGroup; }
+    else if (element.kind === 'vcs') { id = element.action.id; group = vcsGroupOf(element.tool); }
+    else if (element.kind === 'build') { id = element.target.id; group = element.dndGroup; }
     else if (element.kind === 'info') { id = element.dndId; group = element.dndGroup; }
     if (!id || !group) return;
 
-    const cfg = vscode.workspace.getConfiguration('biosBuildAssistant');
+    const cfg = vscode.workspace.getConfiguration('biosBuddy');
 
     if (group === 'version') {
         const list = getInfoFields(cfg);
@@ -979,25 +2309,32 @@ async function moveItem(element: ElementKind | undefined, dir: -1 | 1): Promise<
         const j = i + dir;
         if (i < 0 || j < 0 || j >= list.length) return;
         [list[i], list[j]] = [list[j], list[i]];
-        if (await saveInfoFields(cfg, list)) panelProvider.refresh();
+        if (await saveInfoFields(cfg, list)) refreshPanel();
         return;
     }
 
-    if (group !== 'paths' && group !== 'actions' && group !== 'svnops') return;
+    if (group !== 'actions' && group !== 'svnops' && group !== 'gitops' && group !== 'tools') return;
+
+    // Work from the order the tree shows right now instead of the stored order table:
+    // an id never registered there (new action, never dragged) has indexOf -1, so up/down would silently do nothing.
     const order = getItemOrder(cfg);
-    const arr = order[group];
+    const key = group as OrderGroup;
+    const shown = displayedIds(key, cfg);
+    const arr = order[key].filter(x => shown.includes(x));
+    for (const sid of shown) if (!arr.includes(sid)) arr.push(sid);
+
     const i = arr.indexOf(id);
     const j = i + dir;
     if (i < 0 || j < 0 || j >= arr.length) return;
     [arr[i], arr[j]] = [arr[j], arr[i]];
-    order[group] = arr;
-    if (writeWorkspaceSetting('biosBuildAssistant.itemOrder', order)) panelProvider.refresh();
+    order[key] = arr;
+    if (writeWorkspaceSetting('biosBuddy.itemOrder', order)) refreshPanel();
 }
 
 // Persist infoFields directly into .vscode/settings.json so the host's
 // extension-manifest cache can never block the write.
 function saveInfoFields(_cfg: vscode.WorkspaceConfiguration, list: InfoFieldCfg[]): boolean {
-    return writeWorkspaceSetting('biosBuildAssistant.infoFields', list);
+    return writeWorkspaceSetting('biosBuddy.infoFields', list);
 }
 
 // ---------------------------------------------------------------------------
@@ -1019,53 +2356,65 @@ function computeAllChanges(
     };
 
     for (const key of selected) {
-        const field = fields.find(x => x.key === key);
-        if (!field) continue;
+        // The same Config key can occur twice in the def (typically under #ifdef XXX ... #else ... #endif,
+        // one BLD_ID / ACPI_OEM_TABLE_ID per branch). Both copies must change, otherwise the
+        // branch that was left alone still builds with the old version.
+        const hits = fields.filter(x => x.key === key);
+        if (hits.length === 0) continue;
 
-        if (/VERSION_MAJOR$/i.test(key)) {
-            pushChange(field, String(newMajor), 'major update');
-            continue;
-        }
+        for (const field of hits) {
+            const twin = hits.length > 1 ? ` #${hits.indexOf(field) + 1}/${hits.length}` : '';
+            const reason = (text: string) => text + twin;
 
-        if (/VERSION_MINOR$/i.test(key)) {
-            pushChange(field, String(newMinor), 'auto-increment');
-            continue;
-        }
+            if (/VERSION_MAJOR$/i.test(key)) {
+                pushChange(field, String(newMajor), reason('major update'));
+                continue;
+            }
 
-        if (/BIOS_VERSION$/i.test(key) || /LENOVO_SECURITY_VERSION$/i.test(key)) {
-            const next = bumpVersionString(field.value);
-            if (next !== null) pushChange(field, next, 'bump embedded version');
-            continue;
-        }
+            if (/VERSION_MINOR$/i.test(key)) {
+                pushChange(field, String(newMinor), reason('auto-increment'));
+                continue;
+            }
 
-        if (/ACPI_OEM_REVISION$/i.test(key) || /ACPI_OEM_TABLE_ID$/i.test(key)) {
-            const q = Math.floor(newMinor / 10);
-            const r = newMinor % 10;
-            const oemRev = (newMajor << 12) | (q << 8) | (r << 4);
-            const next = '0x' + oemRev.toString(16).toUpperCase().padStart(8, '0');
-            pushChange(field, next, 'derived from MAJOR.MINOR (PQR)');
-            continue;
-        }
+            if (/BIOS_VERSION$/i.test(key) || /LENOVO_SECURITY_VERSION$/i.test(key)) {
+                const next = bumpVersionString(field.value);
+                if (next !== null) pushChange(field, next, reason('bump embedded version'));
+                continue;
+            }
 
-        if (/BLD_DATE$/i.test(key) || /BUILD_DATE$/i.test(key)) {
-            pushChange(field, quoteLike(field.value, newDate), 'today');
-            continue;
-        }
+            if (/ACPI_OEM_REVISION$/i.test(key) || /ACPI_OEM_TABLE_ID$/i.test(key)) {
+                // Only rewrite the copy that is already a hex number; a table name like "TP-R3U" must stay untouched
+                const bare = field.value.replace(/[\\"]/g, '').trim();
+                if (!/^0x[0-9a-f]+$/i.test(bare)) continue;
+                const q = Math.floor(newMinor / 10);
+                const r = newMinor % 10;
+                const oemRev = (newMajor << 12) | (q << 8) | (r << 4);
+                const next = '0x' + oemRev.toString(16).toUpperCase().padStart(8, '0');
+                pushChange(field, /[\\"]/.test(field.value) ? quoteLike(field.value, next) : next,
+                    reason('derived from MAJOR.MINOR (PQR)'));
+                continue;
+            }
 
-        if (/BLD_TIME$/i.test(key)) {
-            pushChange(field, quoteLike(field.value, formatTime(new Date())), 'time now');
-            continue;
-        }
+            if (/BLD_DATE$/i.test(key) || /BUILD_DATE$/i.test(key)) {
+                pushChange(field, quoteLike(field.value, newDate), reason('today'));
+                continue;
+            }
 
-        if (/BLD_ID$/i.test(key)) {
-            const next = replaceWholeNumber(field.value, curMinor, newMinor);
-            pushChange(field, next, `replace ${curMinor} -> ${newMinor}`);
-            continue;
-        }
+            if (/BLD_TIME$/i.test(key)) {
+                pushChange(field, quoteLike(field.value, formatTime(new Date())), reason('time now'));
+                continue;
+            }
 
-        if (/FW_VER_PACKAGE$/i.test(key)) {
-            const next = bumpLastTwoDigits(field.value);
-            if (next !== null) pushChange(field, next, 'bump 2-digit ver');
+            if (/BLD_ID$/i.test(key)) {
+                const next = bumpBuildId(field.value, curMinor, newMinor);
+                if (next !== null) pushChange(field, next, reason(`bump build id (${curMinor} -> ${newMinor})`));
+                continue;
+            }
+
+            if (/FW_VER_PACKAGE$/i.test(key)) {
+                const next = bumpLastTwoDigits(field.value);
+                if (next !== null) pushChange(field, next, reason('bump 2-digit ver'));
+            }
         }
     }
 
@@ -1086,6 +2435,28 @@ function bumpVersionString(oldRaw: string): string | null {
 function replaceWholeNumber(oldRaw: string, curNum: number, newNum: number): string {
     const re = new RegExp(`(?<!\\d)${curNum}(?!\\d)`);
     return oldRaw.replace(re, String(newNum));
+}
+
+/**
+ * Build ID style strings ("R3UET12T01" / "R3TET11A"):
+ * first try swapping the current MINOR for the new one; if this value has no such MINOR
+ * (typical of the #else branch, whose number already lags a step), shift the trailing
+ * number by the same delta instead - that keeps both branches moving in lockstep.
+ */
+function bumpBuildId(oldRaw: string, curMinor: number, newMinor: number): string | null {
+    const replaced = replaceWholeNumber(oldRaw, curMinor, newMinor);
+    if (replaced !== oldRaw) return replaced;
+    return bumpLastNumber(oldRaw, newMinor - curMinor || 1);
+}
+
+function bumpLastNumber(oldRaw: string, delta: number): string | null {
+    const re = /\d+/g;
+    let last: RegExpExecArray | null = null;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(oldRaw)) !== null) last = m;
+    if (!last) return null;
+    const bumped = String(parseInt(last[0], 10) + delta).padStart(last[0].length, '0');
+    return oldRaw.substring(0, last.index) + bumped + oldRaw.substring(last.index + last[0].length);
 }
 
 function bumpLastTwoDigits(oldRaw: string): string | null {
@@ -1131,28 +2502,32 @@ function quoteLike(oldRaw: string, inner: string): string {
 // Build execution
 // ---------------------------------------------------------------------------
 
-async function runBuild() {
-    const cfg = vscode.workspace.getConfiguration('biosBuildAssistant');
-    const batPath = resolvePath(cfg.get<string>('buildBat', ''));
-    const extraArgs = cfg.get<string>('buildArgs', '') || '';
+async function runBuild(target: BuildTarget) {
+    const batPath = resolvePath(target.script);
+    const extraArgs = (target.args ?? '').trim();
+    const label = displayLabel(target);
 
     if (!batPath) {
-        vscode.window.showErrorMessage('BIOS Build Assistant: buildBat not configured.');
+        const pick = await vscode.window.showWarningMessage(
+            `BIOS Buddy: "${label}" has no build script yet.`,
+            'Pick a script',
+        );
+        if (pick === 'Pick a script') await configureBuildScript({ target });
         return;
     }
     if (!fs.existsSync(batPath)) {
-        vscode.window.showErrorMessage(`BIOS Build Assistant: build bat not found:\n${batPath}`);
+        vscode.window.showErrorMessage(`BIOS Buddy: "${target.label}" script not found:\n${batPath}`);
         return;
     }
 
     const terminal = vscode.window.createTerminal({
-        name: 'BIOS Build',
+        name: label,
         cwd: path.dirname(batPath),
     });
     terminal.show(true);
     const prefix = process.platform === 'win32' ? '.\\' : './';
     terminal.sendText(prefix + path.basename(batPath) + (extraArgs ? ' ' + extraArgs : ''));
-    vscode.window.showInformationMessage(`BIOS Build Assistant: build started in terminal "BIOS Build".`);
+    vscode.window.setStatusBarMessage(`BIOS Buddy: "${label}" started`, 3000);
 }
 
 // ---------------------------------------------------------------------------
@@ -1161,7 +2536,7 @@ async function runBuild() {
 
 async function showChangePreview(defPath: string, changes: FieldChange[]): Promise<boolean> {
     if (changes.length === 0) {
-        vscode.window.showInformationMessage('BIOS Build Assistant: no changes needed.');
+        vscode.window.showInformationMessage('BIOS Buddy: no changes needed.');
         return false;
     }
 

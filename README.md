@@ -1,44 +1,51 @@
-﻿# BIOS Build Assistant
+# BIOS Buddy
 
-BIOS Build Assistant is a VS Code extension designed to help BIOS and firmware teams work faster and more consistently.
+A VS Code extension for day-to-day BIOS / firmware work: version bumps, build scripts,
+SVN & Git actions, and four offline tools — **GUID Assistant**, **COM Assistant**,
+**Binary Editor**, **Text Comparer**. Nothing talks to the network, so it is safe on
+locked-down machines.
 
-This project is built to reduce repetitive manual work during BIOS version updates and build preparation. It helps users manage version fields, trigger common build actions, and keep BIOS-related information in a more structured and repeatable way.
+[中文说明](README.zh-CN.md) · [使用指南（含截图）](docs/USAGE.md)
 
-## What this project does
+## Sidebar
 
-BIOS Build Assistant is meant for teams that need to:
+```
+BIOS Buddy
+├─ BIOS Current Info      the version file, then the fields read from it
+├─ BIOS Build Action      Formal / Test version rows + one or more build rows
+├─ SVN Operation
+├─ Git Operation
+└─ Tools                  GUID Assistant · COM Assistant · Binary Editor · Text Comparer
+```
 
-- update BIOS version information quickly
-- run formal build, test build, and build-only actions with less manual effort
-- keep build-related configuration in one place
-- reduce errors caused by repeated manual changes
-- simplify common SVN operations during BIOS work
+- **Version rows** bump Formal / Test and show a diff first — they never compile.
+- **Build rows** run one script each; click to run, `+` on the group title adds another.
+- **SVN / Git rows** run in the integrated terminal; hover for ▶ / ✎, right-click to rename or hide.
+- Drag to reorder anything; `↺` in the view title bar restores the default order (your own rows stay).
 
-## Main features
+## Tools
 
-- BIOS version update workflow
-- Formal build, test build, and build-only actions
-- Quick access to BIOS version file and build script settings
-- Simple UI for managing the fields involved in build updates
-- SVN update and clean/revert support
+| Tool | What it does |
+| --- | --- |
+| **GUID Assistant** | Makes GUID **v4 / v7**; converts a pasted GUID into nine forms at once (D / N / B / P, C struct, `#define`, EFI byte order, raw hex, Base64). |
+| **COM Assistant** | Serial console for boot logs: raw bytes, HEX view, timestamps, line endings, timed repeat, find / find-all, line numbers. |
+| **Binary Editor** | Two-pane HEX editor: open or import, overwrite / insert bytes, byte diff with a jumpable list, save back to the source file. |
+| **Text Comparer** | Side-by-side diff for `.def` / `.dsc` / logs: character-level marks, in-place editing, per-pane minimap, unified-diff export. |
 
+## Quick start
 
+1. Click the BIOS Buddy icon in the activity bar.
+2. Pick the version file in **BIOS Current Info** (gear on the first row).
+3. Pick a build script on the build row (gear); `+` adds more builds.
+4. Bump with **Formal** / **Test**, then click a build row to compile.
 
-## Who this is for
+## Settings
 
-This extension is focused on BIOS engineering teams, firmware engineers, and anyone who needs a simpler way to handle version updates and common build tasks in a development environment.
+`biosBuddy.svnCleanRemoveIgnored` · `biosBuddy.gitPullMode` · `biosBuddy.gitUpdateSubmodules` ·
+`biosBuddy.confirmDestructive` — all with sensible defaults, adjustable in Settings.
 
-## Requirements
+Rows you add live in `.vscode/settings.json`, so they can be reviewed and shared.
 
-- VS Code 1.85 or newer
+---
 
-## Getting started
-
-1. Open the project in VS Code.
-2. Run the extension in the Extension Development Host.
-3. Configure the BIOS version file and build script paths.
-4. Use the built-in actions to update version data and run the build flow.
-
-## Project status
-
-The project is in an early but usable release stage. The focus is on making BIOS build workflows easier, more consistent, and more approachable for daily engineering work.
+VS Code 1.85 or newer. COM Assistant is Windows-only (it uses `System.IO.Ports`).

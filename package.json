@@ -1,35 +1,42 @@
 {
-  "name": "bios-build-assistant",
-  "displayName": "BIOS Build Assistant",
+  "name": "bios-buddy",
+  "displayName": "BIOS Buddy",
   "description": "Designed to speed up BIOS builds and eliminate repetitive manual work.",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "publisher": "SuyuDiao",
   "icon": "media/bios.png",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/DiaoSuyu/BIOS-Build-Assistant"
+    "url": "https://github.com/DiaoSuyu/BIOS-Buddy"
   },
   "engines": {
     "vscode": "^1.85.0"
   },
-  "categories": ["Other"],
-  "activationEvents": [],
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onWebviewPanel:biosTextComparer",
+    "onWebviewPanel:biosBinaryEditor",
+    "onWebviewPanel:biosGuidTool"
+  ],
   "main": "./out/extension.js",
   "contributes": {
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "biosBuildAssistant",
-          "title": "BIOS Build Assistant",
+          "id": "biosBuddy",
+          "title": "BIOS Buddy",
           "icon": "media/bios.png"
         }
       ]
     },
     "views": {
-      "biosBuildAssistant": [
+      "biosBuddy": [
         {
-          "id": "biosBuildAssistant.panel",
+          "id": "biosBuddy.panel",
           "name": "",
           "icon": "media/bios.png"
         }
@@ -37,176 +44,585 @@
     },
     "commands": [
       {
-        "command": "biosBuildAssistant.incrementAndBuild",
-        "title": "BIOS: Increment Version & Build",
+        "command": "biosBuddy.serialConsole",
+        "title": "BIOS Buddy: COM Assistant",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "biosBuddy.binaryEditor",
+        "title": "BIOS Buddy: Open in Binary Editor",
+        "icon": "$(file-binary)"
+      },
+      {
+        "command": "biosBuddy.beSelectBase",
+        "title": "BIOS Buddy: Select Hex for Compare (A)",
+        "icon": "$(bookmark)"
+      },
+      {
+        "command": "biosBuddy.beCompareWithBase",
+        "title": "BIOS Buddy: Compare Hex with Selected (B)",
+        "icon": "$(diff)"
+      },
+      {
+        "command": "biosBuddy.textComparer",
+        "title": "BIOS Buddy: Text Comparer",
+        "icon": "$(diff)"
+      },
+      {
+        "command": "biosBuddy.tcSelectBase",
+        "title": "BIOS Buddy: Select Text for Compare (A)",
+        "icon": "$(bookmark)"
+      },
+      {
+        "command": "biosBuddy.tcCompareWithBase",
+        "title": "BIOS Buddy: Compare Text with Selected (B)",
+        "icon": "$(diff)"
+      },
+      {
+        "command": "biosBuddy.guidTool",
+        "title": "BIOS Buddy: GUID Assistant",
+        "icon": "$(key)"
+      },
+      {
+        "command": "biosBuddy.formalVersion",
+        "title": "BIOS Buddy: Formal BIOS Version",
         "icon": "$(repo-push)"
       },
       {
-        "command": "biosBuildAssistant.testBuild",
-        "title": "BIOS: TEST BIOS Build",
+        "command": "biosBuddy.testVersion",
+        "title": "BIOS Buddy: Test BIOS Version",
         "icon": "$(beaker)"
       },
       {
-        "command": "biosBuildAssistant.buildOnly",
-        "title": "BIOS: Build Only",
+        "command": "biosBuddy.runBuildTarget",
+        "title": "BIOS Buddy: Run Build",
+        "icon": "$(play)"
+      },
+      {
+        "command": "biosBuddy.buildOnly",
+        "title": "BIOS Buddy: Build (default row)",
         "icon": "$(terminal)"
       },
       {
-        "command": "biosBuildAssistant.svnUpdate",
-        "title": "BIOS: SVN Update",
+        "command": "biosBuddy.addBuild",
+        "title": "BIOS Buddy: Add Build",
+        "icon": "$(add)"
+      },
+      {
+        "command": "biosBuddy.configureBuildScript",
+        "title": "BIOS Buddy: Configure Build Script",
+        "icon": "$(gear)"
+      },
+      {
+        "command": "biosBuddy.renameBuild",
+        "title": "BIOS Buddy: Rename Build",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "biosBuddy.setBuildArgs",
+        "title": "BIOS Buddy: Set Build Arguments",
+        "icon": "$(settings)"
+      },
+      {
+        "command": "biosBuddy.deleteBuild",
+        "title": "BIOS Buddy: Remove Build",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "biosBuddy.restoreBuild",
+        "title": "BIOS Buddy: Put Back Build",
+        "icon": "$(history)"
+      },
+      {
+        "command": "biosBuddy.restoreBuildDefaults",
+        "title": "BIOS Buddy: Restore Build Defaults",
+        "icon": "$(history)"
+      },
+      {
+        "command": "biosBuddy.svnUpdate",
+        "title": "BIOS Buddy: SVN Update",
         "icon": "$(sync)"
       },
       {
-        "command": "biosBuildAssistant.svnCleanRevert",
-        "title": "BIOS: SVN Clean & Revert",
+        "command": "biosBuddy.svnCleanRevert",
+        "title": "BIOS Buddy: SVN Clean & Revert",
         "icon": "$(clear-all)"
       },
       {
-        "command": "biosBuildAssistant.configurePaths",
+        "command": "biosBuddy.gitUpdate",
+        "title": "BIOS Buddy: Git Update",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "biosBuddy.gitResetClean",
+        "title": "BIOS Buddy: Git Reset & Clean",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "biosBuddy.runVcsAction",
+        "title": "BIOS Buddy: Run SVN / Git Action",
+        "icon": "$(play)"
+      },
+      {
+        "command": "biosBuddy.runSvnAction",
+        "title": "BIOS Buddy: Run SVN Action",
+        "icon": "$(play)"
+      },
+      {
+        "command": "biosBuddy.addSvnAction",
+        "title": "BIOS Buddy: Add SVN Action",
+        "icon": "$(add)"
+      },
+      {
+        "command": "biosBuddy.editSvnAction",
+        "title": "BIOS Buddy: Edit SVN Command",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "biosBuddy.renameSvnAction",
+        "title": "BIOS Buddy: Rename SVN Action",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "biosBuddy.deleteSvnAction",
+        "title": "BIOS Buddy: Remove SVN Action",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "biosBuddy.restoreSvnAction",
+        "title": "BIOS Buddy: Put Back SVN Action",
+        "icon": "$(history)"
+      },
+      {
+        "command": "biosBuddy.restoreSvnDefaults",
+        "title": "BIOS Buddy: Restore SVN Defaults",
+        "icon": "$(history)"
+      },
+      {
+        "command": "biosBuddy.runGitAction",
+        "title": "BIOS Buddy: Run Git Action",
+        "icon": "$(play)"
+      },
+      {
+        "command": "biosBuddy.addGitAction",
+        "title": "BIOS Buddy: Add Git Action",
+        "icon": "$(add)"
+      },
+      {
+        "command": "biosBuddy.editGitAction",
+        "title": "BIOS Buddy: Edit Git Command",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "biosBuddy.renameGitAction",
+        "title": "BIOS Buddy: Rename Git Action",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "biosBuddy.deleteGitAction",
+        "title": "BIOS Buddy: Remove Git Action",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "biosBuddy.restoreGitAction",
+        "title": "BIOS Buddy: Put Back Git Action",
+        "icon": "$(history)"
+      },
+      {
+        "command": "biosBuddy.restoreGitDefaults",
+        "title": "BIOS Buddy: Restore Git Defaults",
+        "icon": "$(history)"
+      },
+      {
+        "command": "biosBuddy.resetVcsAction",
+        "title": "BIOS Buddy: Restore This Action",
+        "icon": "$(history)"
+      },
+      {
+        "command": "biosBuddy.configurePaths",
         "title": "Configure Paths",
         "icon": "$(settings-gear)"
       },
       {
-        "command": "biosBuildAssistant.configureDefFile",
+        "command": "biosBuddy.configureDefFile",
         "title": "Configure BIOS Version File",
         "icon": "$(gear)"
       },
       {
-        "command": "biosBuildAssistant.configureBuildBat",
-        "title": "Configure Build Script",
+        "command": "biosBuddy.configureBuildBat",
+        "title": "Configure Build Script (default Build row)",
         "icon": "$(gear)"
       },
       {
-        "command": "biosBuildAssistant.addInfoField",
+        "command": "biosBuddy.addInfoField",
         "title": "Add Info Field",
         "icon": "$(add)"
       },
       {
-        "command": "biosBuildAssistant.resetInfoFields",
+        "command": "biosBuddy.resetInfoFields",
         "title": "Reset Info Fields to Default",
         "icon": "$(discard)"
       },
       {
-        "command": "biosBuildAssistant.reselectBuildFields",
+        "command": "biosBuddy.reselectBuildFields",
         "title": "Re-select Build Fields",
         "icon": "$(gear)"
       },
       {
-        "command": "biosBuildAssistant.moveItemUp",
+        "command": "biosBuddy.moveItemUp",
         "title": "Move Up",
         "icon": "$(arrow-up)"
       },
       {
-        "command": "biosBuildAssistant.moveItemDown",
+        "command": "biosBuddy.moveItemDown",
         "title": "Move Down",
         "icon": "$(arrow-down)"
       },
       {
-        "command": "biosBuildAssistant.removeInfoField",
+        "command": "biosBuddy.removeInfoField",
         "title": "Hide Info Field",
         "icon": "$(eye-closed)"
       },
       {
-        "command": "biosBuildAssistant.refresh",
+        "command": "biosBuddy.refresh",
         "title": "Refresh",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "biosBuddy.collapseAll",
+        "title": "Collapse All Groups",
+        "icon": "$(collapse-all)"
+      },
+      {
+        "command": "biosBuddy.expandAll",
+        "title": "Expand All Groups",
+        "icon": "$(expand-all)"
+      },
+      {
+        "command": "biosBuddy.resetOrder",
+        "title": "Restore Default Order",
+        "icon": "$(discard)"
       }
     ],
     "configuration": {
-      "title": "BIOS Build Assistant",
+      "title": "BIOS Buddy",
       "properties": {
-        "biosBuildAssistant.defFile": {
+        "biosBuddy.defFile": {
           "type": "string",
           "default": "",
-          "description": "Path to BiosVersion.def (supports ${workspaceFolder} variable)"
+          "description": "Path to BiosVersion.def (supports ${workspaceFolder} variable). Shown as the first row of BIOS Current Info."
         },
-        "biosBuildAssistant.buildBat": {
+        "biosBuddy.buildBat": {
           "type": "string",
           "default": "",
-          "description": "Path to build batch script (supports ${workspaceFolder} variable)"
+          "description": "Script run by the default Build row (supports ${workspaceFolder} variable). Each added build row keeps its own script."
         },
-        "biosBuildAssistant.buildArgs": {
+        "biosBuddy.buildArgs": {
           "type": "string",
           "default": "",
-          "description": "Extra arguments to pass to the build bat"
+          "description": "Extra arguments appended when the default Build row runs"
         },
-        "biosBuildAssistant.dateFormat": {
+        "biosBuddy.builds": {
+          "type": "array",
+          "default": [],
+          "markdownDescription": "Build rows shown under **BIOS Build Action** (after Formal / Test). Leave empty/unset to keep just the default `Build` row, which runs `buildBat`. Rows added from the panel store their own `script`; the default row only stores `id` (and `hidden` when removed), because its script/args/label come from `buildBat` / `buildArgs` / `buildOnlyLabel`.",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "label",
+              "script"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Stable id; the default row is build.only, added rows use build.custom.N"
+              },
+              "label": {
+                "type": "string",
+                "description": "Row label in the panel"
+              },
+              "script": {
+                "type": "string",
+                "description": "Build script for this row (supports ${workspaceFolder})"
+              },
+              "args": {
+                "type": "string",
+                "description": "Extra arguments appended after the script"
+              },
+              "custom": {
+                "type": "boolean",
+                "description": "Added from the panel, so it can be removed again"
+              },
+              "hidden": {
+                "type": "boolean",
+                "description": "The default row was removed: kept here so it can be put back with one click"
+              }
+            }
+          }
+        },
+        "biosBuddy.dateFormat": {
           "type": "string",
           "default": "MM/DD/YYYY",
-          "enum": ["MM/DD/YYYY", "DD/MM/YYYY", "YYYY-MM-DD"],
+          "enum": [
+            "MM/DD/YYYY",
+            "DD/MM/YYYY",
+            "YYYY-MM-DD"
+          ],
           "description": "Date format for BLD_DATE fields"
         },
-        "biosBuildAssistant.incrementMajor": {
+        "biosBuddy.incrementMajor": {
           "type": "boolean",
           "default": false,
           "description": "If true, also increment MAJOR when MINOR overflows (>= 100)"
         },
-        "biosBuildAssistant.formalBuildLabel": {
+        "biosBuddy.formalBuildLabel": {
           "type": "string",
-          "default": "Formal BIOS Build",
-          "description": "Custom label shown for the formal BIOS build action"
+          "default": "Formal BIOS Version",
+          "description": "Custom label shown for the formal BIOS version row (version fields only, no compile)"
         },
-        "biosBuildAssistant.testBuildLabel": {
+        "biosBuddy.testBuildLabel": {
           "type": "string",
-          "default": "Test BIOS Build",
-          "description": "Custom label shown for the test BIOS build action"
+          "default": "Test BIOS Version",
+          "description": "Custom label shown for the test BIOS version row (version fields only, no compile)"
         },
-        "biosBuildAssistant.buildOnlyLabel": {
+        "biosBuddy.buildOnlyLabel": {
           "type": "string",
-          "default": "Build Only",
-          "description": "Custom label shown for the build-only action"
+          "default": "",
+          "markdownDescription": "Custom name for the default build row. **Leave empty** to follow the script file name (change `buildBat` and the row renames itself)."
         },
-        "biosBuildAssistant.svnUpdateLabel": {
+        "biosBuddy.svnUpdateLabel": {
           "type": "string",
           "default": "SVN Update",
           "description": "Custom label shown for the SVN update action"
         },
-        "biosBuildAssistant.svnCleanRevertLabel": {
+        "biosBuddy.svnCleanRevertLabel": {
           "type": "string",
           "default": "SVN Clean & Revert",
           "description": "Custom label shown for the SVN clean and revert action"
         },
-        "biosBuildAssistant.formalBuildFields": {
+        "biosBuddy.gitUpdateLabel": {
+          "type": "string",
+          "default": "Git Update",
+          "description": "Custom label shown for the Git update action"
+        },
+        "biosBuddy.gitResetCleanLabel": {
+          "type": "string",
+          "default": "Git Reset & Clean",
+          "description": "Custom label shown for the Git reset and clean action"
+        },
+        "biosBuddy.svnActions": {
           "type": "array",
           "default": [],
-          "description": "Selected Config fields to update when the Formal BIOS Build action runs. This is intentionally empty by default; users must choose manually on first use."
+          "markdownDescription": "Actions shown in the **SVN Operation** group. Leave it empty/unset to use the two presets (update + clean). Each entry runs its `steps` in order inside the integrated terminal — `{root}` is replaced by the working copy / repository root. `builtin` means the original built-in flow (clean computes the diff, previews, deletes and verifies); editing the command drops it.",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "label",
+              "steps"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Stable id; presets use svnUpdate / svnCleanRevert / gitUpdate / gitResetClean"
+              },
+              "label": {
+                "type": "string",
+                "description": "Row label in the panel"
+              },
+              "steps": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Commands, run one after another; {root} = working copy / repo root"
+              },
+              "builtin": {
+                "type": "string",
+                "enum": [
+                  "svnUpdate",
+                  "svnClean",
+                  "gitUpdate",
+                  "gitResetClean"
+                ],
+                "description": "Built-in flow to use instead of the literal steps"
+              },
+              "custom": {
+                "type": "boolean",
+                "description": "Added from the panel, so it can be removed again"
+              },
+              "hidden": {
+                "type": "boolean",
+                "description": "A preset removed from the panel: kept here so it can be put back with one click (its row in the panel shows as \"removed\")"
+              }
+            }
+          }
         },
-        "biosBuildAssistant.testBuildFields": {
+        "biosBuddy.gitActions": {
           "type": "array",
           "default": [],
-          "description": "Selected Config fields to update when the Test BIOS Build action runs. This is intentionally empty by default; users must choose manually on first use."
+          "markdownDescription": "Actions shown in the **Git Operation** group. Leave it empty/unset to use the two presets (update + clean). Each entry runs its `steps` in order inside the integrated terminal — `{root}` is replaced by the working copy / repository root. `builtin` means the original built-in flow (clean computes the diff, previews, deletes and verifies); editing the command drops it.",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "label",
+              "steps"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Stable id; presets use svnUpdate / svnCleanRevert / gitUpdate / gitResetClean"
+              },
+              "label": {
+                "type": "string",
+                "description": "Row label in the panel"
+              },
+              "steps": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Commands, run one after another; {root} = working copy / repo root"
+              },
+              "builtin": {
+                "type": "string",
+                "enum": [
+                  "svnUpdate",
+                  "svnClean",
+                  "gitUpdate",
+                  "gitResetClean"
+                ],
+                "description": "Built-in flow to use instead of the literal steps"
+              },
+              "custom": {
+                "type": "boolean",
+                "description": "Added from the panel, so it can be removed again"
+              },
+              "hidden": {
+                "type": "boolean",
+                "description": "A preset removed from the panel: kept here so it can be put back with one click (its row in the panel shows as \"removed\")"
+              }
+            }
+          }
         },
-        "biosBuildAssistant.infoFields": {
+        "biosBuddy.svnCleanRemoveIgnored": {
+          "type": "boolean",
+          "default": true,
+          "description": "When SVN Clean runs, also delete files ignored through svn:ignore (that is what build output usually is). Set false to remove unversioned files only."
+        },
+        "biosBuddy.gitPullMode": {
+          "type": "string",
+          "default": "ff-only",
+          "enum": [
+            "ff-only",
+            "rebase",
+            "merge"
+          ],
+          "enumDescriptions": [
+            "git pull --ff-only: refuses diverged branches (safest)",
+            "git pull --rebase: puts local commits on top",
+            "git pull --no-rebase: creates a merge commit"
+          ],
+          "description": "How Git Update integrates incoming commits"
+        },
+        "biosBuddy.gitUpdateSubmodules": {
+          "type": "boolean",
+          "default": false,
+          "description": "Also handle submodules: Git Update runs git submodule update --init --recursive; Git Reset & Clean runs git reset --hard + git clean -ffdx inside every submodule"
+        },
+        "biosBuddy.confirmDestructive": {
+          "type": "boolean",
+          "default": true,
+          "description": "Ask for confirmation (with a preview of what is about to be deleted) before SVN Clean or Git Reset & Clean removes files"
+        },
+        "biosBuddy.formalBuildFields": {
+          "type": "array",
+          "default": [],
+          "description": "Selected Config fields to update when the Formal BIOS Version action runs. This is intentionally empty by default; users must choose manually on first use."
+        },
+        "biosBuddy.testBuildFields": {
+          "type": "array",
+          "default": [],
+          "description": "Selected Config fields to update when the Test BIOS Version action runs. This is intentionally empty by default; users must choose manually on first use."
+        },
+        "biosBuddy.infoFields": {
           "type": "array",
           "description": "Fields shown under 'BIOS Current Info', in display order. Each item is { label, key }, where key is a Config field name in BiosVersion.def. Drag rows in the panel to reorder; use the + button on the group title to add and the eye button on a row to hide.",
           "default": [
-            { "label": "BIOS_VERSION", "key": "BIOS_VERSION" },
-            { "label": "BIOS_VERSION_MAJOR", "key": "BIOS_VERSION_MAJOR" },
-            { "label": "BIOS_VERSION_MINOR", "key": "BIOS_VERSION_MINOR" },
-            { "label": "ACPI_OEM_REVISION", "key": "ACPI_OEM_REVISION" },
-            { "label": "LENOVO_COMMON_BLD_ID", "key": "LENOVO_COMMON_BLD_ID" },
-            { "label": "LENOVO_COMMON_BLD_DATE", "key": "LENOVO_COMMON_BLD_DATE" }
+            {
+              "label": "BIOS_VERSION",
+              "key": "BIOS_VERSION"
+            },
+            {
+              "label": "BIOS_VERSION_MAJOR",
+              "key": "BIOS_VERSION_MAJOR"
+            },
+            {
+              "label": "BIOS_VERSION_MINOR",
+              "key": "BIOS_VERSION_MINOR"
+            },
+            {
+              "label": "ACPI_OEM_REVISION",
+              "key": "ACPI_OEM_REVISION"
+            },
+            {
+              "label": "LENOVO_COMMON_BLD_ID",
+              "key": "LENOVO_COMMON_BLD_ID"
+            },
+            {
+              "label": "LENOVO_COMMON_BLD_DATE",
+              "key": "LENOVO_COMMON_BLD_DATE"
+            }
           ],
           "items": {
             "type": "object",
             "properties": {
-              "label": { "type": "string", "description": "Display name in the panel (same as key by default)" },
-              "key": { "type": "string", "description": "Config field name in BiosVersion.def" }
+              "label": {
+                "type": "string",
+                "description": "Display name in the panel (same as key by default)"
+              },
+              "key": {
+                "type": "string",
+                "description": "Config field name in BiosVersion.def"
+              }
             },
-            "required": ["label", "key"]
+            "required": [
+              "label",
+              "key"
+            ]
           }
         },
-        "biosBuildAssistant.itemOrder": {
+        "biosBuddy.itemOrder": {
           "type": "object",
-          "description": "Display order of rows inside each group, changed by dragging rows in the panel. paths: defFile/buildBat; actions: incBuild/testBuild/buildOnly; svnops: svnUpdate/svnCleanRevert.",
+          "description": "Display order of rows inside each group, changed by dragging rows in the panel (or Move Up / Move Down). actions: incBuild/testBuild plus build row ids (build.only, build.custom.N); svnops: svnUpdate/svnCleanRevert; gitops: gitUpdate/gitResetClean; tools: guidTool/serialTool/binEdit/txtCmp.",
           "default": {
-            "paths": ["defFile", "buildBat"],
-            "actions": ["incBuild", "testBuild", "buildOnly"],
-            "svnops": ["svnUpdate", "svnCleanRevert"]
+            "actions": [
+              "incBuild",
+              "testBuild",
+              "build.only"
+            ],
+            "svnops": [
+              "svnUpdate",
+              "svnCleanRevert"
+            ],
+            "gitops": [
+              "gitUpdate",
+              "gitResetClean"
+            ],
+            "tools": [
+              "guidTool",
+              "serialTool",
+              "binEdit",
+              "txtCmp"
+            ]
           },
           "additionalProperties": {
             "type": "array",
-            "items": { "type": "string" }
+            "items": {
+              "type": "string"
+            }
           }
         }
       }
@@ -214,73 +630,238 @@
     "menus": {
       "explorer/context": [
         {
+          "command": "biosBuddy.tcSelectBase",
+          "when": "explorerResourceIsFolder == false",
+          "group": "biosBuddy@1"
+        },
+        {
+          "command": "biosBuddy.tcCompareWithBase",
+          "when": "explorerResourceIsFolder == false && biosBuddy.tcHasBase",
+          "group": "biosBuddy@2"
+        },
+        {
+          "command": "biosBuddy.beSelectBase",
+          "when": "explorerResourceIsFolder == false",
+          "group": "biosBuddy@3"
+        },
+        {
+          "command": "biosBuddy.beCompareWithBase",
+          "when": "explorerResourceIsFolder == false && biosBuddy.beHasBase",
+          "group": "biosBuddy@4"
+        },
+        {
+          "command": "biosBuddy.binaryEditor",
+          "when": "explorerResourceIsFolder == false",
+          "group": "biosBuddy@5"
+        },
+        {
           "when": "resourceFilename == BiosVersion.def",
-          "command": "biosBuildAssistant.incrementAndBuild",
-          "group": "navigation"
+          "command": "biosBuddy.formalVersion",
+          "group": "biosBuddy@6"
         }
       ],
       "view/title": [
         {
-          "command": "biosBuildAssistant.refresh",
-          "when": "view == biosBuildAssistant.panel",
+          "command": "biosBuddy.collapseAll",
+          "when": "view == biosBuddy.panel && biosTreeOpen",
+          "group": "navigation@0"
+        },
+        {
+          "command": "biosBuddy.expandAll",
+          "when": "view == biosBuddy.panel && !biosTreeOpen",
+          "group": "navigation@0"
+        },
+        {
+          "command": "biosBuddy.refresh",
+          "when": "view == biosBuddy.panel",
           "group": "navigation@1"
+        },
+        {
+          "command": "biosBuddy.resetOrder",
+          "when": "view == biosBuddy.panel",
+          "group": "navigation@2"
         }
       ],
       "view/item/context": [
         {
-          "command": "biosBuildAssistant.configureDefFile",
-          "when": "view == biosBuildAssistant.panel && viewItem == pathDefFile",
+          "command": "biosBuddy.configureDefFile",
+          "when": "view == biosBuddy.panel && viewItem == pathDefFile",
           "group": "inline@1"
         },
         {
-          "command": "biosBuildAssistant.configureBuildBat",
-          "when": "view == biosBuildAssistant.panel && viewItem == pathBuildBat",
+          "command": "biosBuddy.reselectBuildFields",
+          "when": "view == biosBuddy.panel && viewItem == actionWithConfig",
           "group": "inline@1"
         },
         {
-          "command": "biosBuildAssistant.reselectBuildFields",
-          "when": "view == biosBuildAssistant.panel && viewItem == actionWithConfig",
+          "command": "biosBuddy.configureBuildScript",
+          "when": "view == biosBuddy.panel && viewItem =~ /^build(Preset|Custom)$/",
           "group": "inline@1"
         },
         {
-          "command": "biosBuildAssistant.buildOnly",
-          "when": "view == biosBuildAssistant.panel && viewItem == actionBuildOnly",
-          "group": "inline@1"
-        },
-        {
-          "command": "biosBuildAssistant.svnUpdate",
-          "when": "view == biosBuildAssistant.panel && viewItem == actionSvnUpdate",
-          "group": "inline@1"
-        },
-        {
-          "command": "biosBuildAssistant.svnCleanRevert",
-          "when": "view == biosBuildAssistant.panel && viewItem == actionSvnCleanRevert",
-          "group": "inline@1"
-        },
-        {
-          "command": "biosBuildAssistant.addInfoField",
-          "when": "view == biosBuildAssistant.panel && viewItem == versionGroup",
-          "group": "inline@1"
-        },
-        {
-          "command": "biosBuildAssistant.resetInfoFields",
-          "when": "view == biosBuildAssistant.panel && viewItem == versionGroup",
+          "command": "biosBuddy.deleteBuild",
+          "when": "view == biosBuddy.panel && viewItem =~ /^build(Preset|Custom)$/",
           "group": "inline@2"
         },
         {
-          "command": "biosBuildAssistant.removeInfoField",
-          "when": "view == biosBuildAssistant.panel && viewItem == infoField",
+          "command": "biosBuddy.restoreBuild",
+          "when": "view == biosBuddy.panel && viewItem == buildHidden",
           "group": "inline@1"
         },
         {
-          "command": "biosBuildAssistant.moveItemUp",
-          "when": "view == biosBuildAssistant.panel && viewItem =~ /^(pathDefFile|pathBuildBat|infoField|action)$/",
+          "command": "biosBuddy.addBuild",
+          "when": "view == biosBuddy.panel && viewItem == actionsGroup",
+          "group": "inline@1"
+        },
+        {
+          "command": "biosBuddy.restoreBuildDefaults",
+          "when": "view == biosBuddy.panel && viewItem == actionsGroup",
+          "group": "inline@2"
+        },
+        {
+          "command": "biosBuddy.addBuild",
+          "when": "view == biosBuddy.panel && viewItem =~ /^build(Preset|Custom)$/",
+          "group": "build@0"
+        },
+        {
+          "command": "biosBuddy.addInfoField",
+          "when": "view == biosBuddy.panel && viewItem == versionGroup",
+          "group": "inline@1"
+        },
+        {
+          "command": "biosBuddy.resetInfoFields",
+          "when": "view == biosBuddy.panel && viewItem == versionGroup",
+          "group": "inline@2"
+        },
+        {
+          "command": "biosBuddy.removeInfoField",
+          "when": "view == biosBuddy.panel && viewItem == infoField",
+          "group": "inline@1"
+        },
+        {
+          "command": "biosBuddy.moveItemUp",
+          "when": "view == biosBuddy.panel && viewItem =~ /^(infoField|action(IncBuild|TestBuild|BinEdit|SerialTool|TxtCmp|GuidTool|WithConfig)|build(Preset|Custom)|vcs(Action|ActionModified|CustomAction)\\.(svn|git))$/",
           "group": "1_order@1"
         },
         {
-          "command": "biosBuildAssistant.moveItemDown",
-          "when": "view == biosBuildAssistant.panel && viewItem =~ /^(pathDefFile|pathBuildBat|infoField|action)$/",
+          "command": "biosBuddy.moveItemDown",
+          "when": "view == biosBuddy.panel && viewItem =~ /^(infoField|action(IncBuild|TestBuild|BinEdit|SerialTool|TxtCmp|GuidTool|WithConfig)|build(Preset|Custom)|vcs(Action|ActionModified|CustomAction)\\.(svn|git))$/",
           "group": "1_order@2"
+        },
+        {
+          "command": "biosBuddy.renameBuild",
+          "when": "view == biosBuddy.panel && viewItem =~ /^build(Preset|Custom)$/",
+          "group": "build@1"
+        },
+        {
+          "command": "biosBuddy.setBuildArgs",
+          "when": "view == biosBuddy.panel && viewItem =~ /^build(Preset|Custom)$/",
+          "group": "build@2"
+        },
+        {
+          "command": "biosBuddy.deleteBuild",
+          "when": "view == biosBuddy.panel && viewItem =~ /^build(Preset|Custom)$/",
+          "group": "build@3"
+        },
+        {
+          "command": "biosBuddy.restoreBuild",
+          "when": "view == biosBuddy.panel && viewItem == buildHidden",
+          "group": "build@1"
+        },
+        {
+          "command": "biosBuddy.runSvnAction",
+          "when": "view == biosBuddy.panel && viewItem =~ /^vcs(Action|ActionModified|CustomAction)\\.svn$/",
+          "group": "inline@1"
+        },
+        {
+          "command": "biosBuddy.runGitAction",
+          "when": "view == biosBuddy.panel && viewItem =~ /^vcs(Action|ActionModified|CustomAction)\\.git$/",
+          "group": "inline@1"
+        },
+        {
+          "command": "biosBuddy.editSvnAction",
+          "when": "view == biosBuddy.panel && viewItem =~ /^vcs(Action|ActionModified|CustomAction)\\.svn$/",
+          "group": "inline@2"
+        },
+        {
+          "command": "biosBuddy.editGitAction",
+          "when": "view == biosBuddy.panel && viewItem =~ /^vcs(Action|ActionModified|CustomAction)\\.git$/",
+          "group": "inline@2"
+        },
+        {
+          "command": "biosBuddy.deleteSvnAction",
+          "when": "view == biosBuddy.panel && viewItem =~ /^vcs(Action|ActionModified|CustomAction)\\.svn$/",
+          "group": "inline@3"
+        },
+        {
+          "command": "biosBuddy.deleteGitAction",
+          "when": "view == biosBuddy.panel && viewItem =~ /^vcs(Action|ActionModified|CustomAction)\\.git$/",
+          "group": "inline@3"
+        },
+        {
+          "command": "biosBuddy.restoreSvnAction",
+          "when": "view == biosBuddy.panel && viewItem =~ /^vcsHidden\\.svn$/",
+          "group": "inline@1"
+        },
+        {
+          "command": "biosBuddy.restoreGitAction",
+          "when": "view == biosBuddy.panel && viewItem =~ /^vcsHidden\\.git$/",
+          "group": "inline@1"
+        },
+        {
+          "command": "biosBuddy.addSvnAction",
+          "when": "view == biosBuddy.panel && viewItem == svnGroup",
+          "group": "inline@1"
+        },
+        {
+          "command": "biosBuddy.addGitAction",
+          "when": "view == biosBuddy.panel && viewItem == gitGroup",
+          "group": "inline@1"
+        },
+        {
+          "command": "biosBuddy.restoreSvnDefaults",
+          "when": "view == biosBuddy.panel && viewItem == svnGroup",
+          "group": "inline@2"
+        },
+        {
+          "command": "biosBuddy.restoreGitDefaults",
+          "when": "view == biosBuddy.panel && viewItem == gitGroup",
+          "group": "inline@2"
+        },
+        {
+          "command": "biosBuddy.renameSvnAction",
+          "when": "view == biosBuddy.panel && viewItem =~ /^vcs(Action|ActionModified|CustomAction)\\.svn$/",
+          "group": "vcs@1"
+        },
+        {
+          "command": "biosBuddy.renameGitAction",
+          "when": "view == biosBuddy.panel && viewItem =~ /^vcs(Action|ActionModified|CustomAction)\\.git$/",
+          "group": "vcs@1"
+        },
+        {
+          "command": "biosBuddy.resetVcsAction",
+          "when": "view == biosBuddy.panel && viewItem =~ /^vcsActionModified\\.(svn|git)$/",
+          "group": "vcs@2"
+        },
+        {
+          "command": "biosBuddy.deleteSvnAction",
+          "when": "view == biosBuddy.panel && viewItem =~ /^vcs(Action|ActionModified|CustomAction)\\.svn$/",
+          "group": "vcs@2"
+        },
+        {
+          "command": "biosBuddy.deleteGitAction",
+          "when": "view == biosBuddy.panel && viewItem =~ /^vcs(Action|ActionModified|CustomAction)\\.git$/",
+          "group": "vcs@2"
+        },
+        {
+          "command": "biosBuddy.restoreSvnAction",
+          "when": "view == biosBuddy.panel && viewItem =~ /^vcsHidden\\.svn$/",
+          "group": "vcs@1"
+        },
+        {
+          "command": "biosBuddy.restoreGitAction",
+          "when": "view == biosBuddy.panel && viewItem =~ /^vcsHidden\\.git$/",
+          "group": "vcs@1"
         }
       ]
     }
@@ -296,5 +877,3 @@
     "typescript": "^5.3.3"
   }
 }
-
-

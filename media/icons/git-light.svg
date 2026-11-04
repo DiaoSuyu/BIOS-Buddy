@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <!-- Git 的分支点线，单色（不再上橙底） -->
+  <g fill="none" stroke="#3a3a3a" stroke-width="3" stroke-linecap="round">
+    <path d="M11.6 10.4v11.2"/>
+    <path d="M11.6 14.8c4.6 0 7.8 2 8.8 5.3"/>
+  </g>
+  <circle cx="11.6" cy="7.4" r="3.4" fill="#3a3a3a"/>
+  <circle cx="11.6" cy="24.6" r="3.4" fill="#3a3a3a"/>
+  <circle cx="22.2" cy="21.9" r="3.4" fill="#3a3a3a"/>
+</svg>

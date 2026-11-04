@@ -1,0 +1,635 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:;">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GUID Assistant</title>
+<style>
+  :root{
+    --bg:var(--vscode-editorWidget-background,#eef0f4);
+    --panel:var(--vscode-editor-background,#ffffff);
+    --line:var(--vscode-panel-border,#dfe2e9);
+    --line2:var(--vscode-editorWidget-border,#eceef3);
+    --text:var(--vscode-editor-foreground,#1f2430);
+    --muted:var(--vscode-descriptionForeground,#8a90a0);
+    --accent:var(--vscode-button-background,#2563eb);
+    --accent-hover:#1d4fd7;
+    --accent-soft:var(--vscode-list-hoverBackground,#eef2ff);
+    --group-bg:#fcfcfe; --head-bg:#f7f8fb;
+    --input-bg:var(--vscode-input-background,#fff);
+    --row-alt:var(--vscode-editor-lineHighlightBackground,#fafbfd);
+    --soft-line-a:#c7d7ff;
+    --danger:#dc2626;
+  }
+  body.vscode-dark, body.vscode-high-contrast{
+    --bg:var(--vscode-editorWidget-background,#1e1e1e);
+    --panel:var(--vscode-editor-background,#1e1e1e);
+    --line:var(--vscode-panel-border,#3c3c3c);
+    --line2:var(--vscode-editorWidget-border,#343434);
+    --text:var(--vscode-editor-foreground,#e6e6e6);
+    --muted:var(--vscode-descriptionForeground,#a3a3a3);
+    --accent:var(--vscode-button-background,#3b82f6);
+    --accent-hover:#2563eb;
+    --accent-soft:rgba(59,130,246,.18);
+    --group-bg:var(--vscode-editorWidget-background,#252526);
+    --head-bg:var(--vscode-sideBar-background,#252526);
+    --input-bg:var(--vscode-input-background,#3c3c3c);
+    --row-alt:rgba(255,255,255,.045);
+    --soft-line-a:rgba(37,99,235,.42);
+    --danger:var(--vscode-errorForeground,#ef4444);
+  }
+  *{box-sizing:border-box;}
+  html,body{height:100%;}
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:"Segoe UI","Microsoft YaHei UI","Microsoft YaHei","PingFang SC","Hiragino Sans GB","Noto Sans CJK SC",sans-serif; font-size:13px;
+    display:flex; flex-direction:column; overflow:hidden;
+  }
+  button{
+    font:inherit; border:1px solid var(--line); border-radius:6px; height:28px; padding:0 10px;
+    background:var(--input-bg); color:var(--text); cursor:pointer; white-space:nowrap;
+    display:inline-flex; align-items:center; gap:5px; flex:0 0 auto;
+  }
+  button:hover:not(:disabled){background:var(--accent-soft); border-color:var(--accent);}
+  button:disabled{opacity:.45; cursor:not-allowed;}
+  button.primary{background:var(--accent); border-color:var(--accent); color:#fff; font-weight:600;}
+  button.primary:hover:not(:disabled){background:var(--accent-hover); border-color:var(--accent-hover);}
+  input[type=text], select{
+    font:inherit; border:1px solid var(--line); border-radius:6px; height:28px;
+    background:var(--input-bg); color:var(--text); padding:0 8px;
+  }
+  select{cursor:pointer; padding:0 4px;}
+
+  /* ===== title bar ===== */
+  #titlebar{flex:none; background:var(--panel); border-bottom:1px solid var(--line); padding:7px 14px;
+    display:flex; align-items:center; gap:10px;}
+  #titlebar .brand{font-weight:700; font-size:15px; letter-spacing:.4px; color:var(--accent);}
+  #btnAbout{height:22px; padding:0 9px; font-size:11.5px; border-radius:11px; color:var(--muted);}
+  #btnAbout:hover{background:var(--accent-soft); border-color:var(--accent); color:var(--accent);}
+  #titlebar .ver{font:600 11px/1 Consolas,"Cascadia Mono","Courier New",monospace; color:#fff; background:var(--accent);
+    border-radius:4px; padding:3px 7px;}
+  #titlebar .spacer{flex:1;}
+  #btnLang{min-width:52px; height:24px; padding:0 10px; font-size:12px; font-weight:600; border-radius:6px; justify-content:center;}
+
+  /* ===== toolbar ===== */
+  #toolbar{flex:none; background:var(--panel); border-bottom:1px solid var(--line); padding:12px 14px 10px;
+    display:flex; flex-wrap:wrap; gap:10px; align-items:stretch;}
+  /* Controls hug the bottom edge of the group, like the Binary Editor: the labelled
+     fields are 42px tall (10.5px label + 3px gap + 28px input) while plain buttons are
+     28px, so centring them would leave the Generate button 7px above the input's bottom. */
+  .group{position:relative; border:1px solid var(--line2); border-radius:9px; padding:17px 9px 8px;
+    background:var(--group-bg); display:flex; gap:6px; align-items:flex-end; flex-wrap:wrap; min-height:56px;}
+  .group > .cap{position:absolute; top:-8px; left:9px; background:var(--panel); padding:0 5px;
+    font-size:11px; color:var(--muted); letter-spacing:1px;}
+  .fld{display:inline-flex; flex-direction:column; gap:3px;}
+  .fl{font-size:10.5px; color:var(--muted); line-height:1; margin-left:1px;}
+  input.cnt{width:64px; text-align:center; font:12.5px Consolas,"Cascadia Mono","Courier New",monospace;}
+  select.ver{height:28px; font-size:12.5px; min-width:82px;}
+  /* One-line explanation of the selected version, right under the toolbar:
+     the difference between v4 and v7 is the only thing about a UUID that
+     changes how you should use it, so it is spelled out instead of hidden in a tooltip. */
+  #verNote{flex:none; display:flex; align-items:center; gap:8px; padding:7px 14px;
+    background:var(--group-bg); border-bottom:1px solid var(--line2); font-size:12px; line-height:1.5;
+    color:var(--muted);}
+  #verNote .vn-tag{flex:none; font:700 11px/1 Consolas,"Cascadia Mono","Courier New",monospace;
+    color:var(--accent); background:var(--accent-soft); border:1px solid var(--soft-line-a);
+    border-radius:4px; padding:3px 6px; letter-spacing:.4px;}
+  #verNote .vn-tx{min-width:0;}
+  .chk{display:inline-flex; align-items:center; gap:5px; color:var(--muted); user-select:none; height:28px; font-size:12.5px;}
+  .chk input{margin:0;}
+
+  /* ===== body ===== */
+  #main{flex:1 1 auto; min-height:0; display:flex; flex-direction:column; background:var(--panel);}
+  #inWrap{flex:none; padding:12px 14px 10px;}
+  #inHead{display:flex; align-items:center; gap:8px; margin-bottom:6px; color:var(--muted); font-size:11px;
+    letter-spacing:.8px; text-transform:uppercase;}
+  #inHead .spacer{flex:1;}
+  #in{
+    width:100%; height:104px; resize:vertical; padding:9px 11px;
+    border:1px solid var(--line); border-radius:8px; background:var(--input-bg); color:var(--text);
+    font:12.5px/1.7 Consolas,"Cascadia Mono","Courier New",monospace;
+    outline:none; white-space:pre; overflow:auto;
+  }
+  #in:focus{border-color:var(--accent);}
+
+  #fmtHead{flex:none; display:flex; align-items:center; gap:8px; padding:6px 14px 8px;
+    border-top:1px solid var(--line); color:var(--muted); font-size:11px; letter-spacing:.8px; text-transform:uppercase;}
+  #fmtHead .spacer{flex:1;}
+  #fmtList{flex:1 1 auto; min-height:0; overflow:auto; padding:0 14px 14px;}
+  .frow{
+    display:flex; align-items:center; gap:10px; padding:7px 9px; border:1px solid var(--line2);
+    border-radius:8px; margin-bottom:6px; background:var(--panel);
+  }
+  .frow:hover{background:var(--row-alt); border-color:var(--soft-line-a);}
+  .frow .tag{
+    flex:0 0 74px; font:600 11px/1 Consolas,"Cascadia Mono","Courier New",monospace;
+    color:var(--accent); letter-spacing:.4px;
+  }
+  .frow .nm{flex:0 0 128px; font-size:11.5px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+  .frow code{
+    flex:1 1 auto; min-width:0; font:12.5px/1.5 Consolas,"Cascadia Mono","Courier New",monospace;
+    color:var(--text); white-space:pre; overflow-x:auto; scrollbar-width:none; cursor:text; user-select:all;
+  }
+  .frow code::-webkit-scrollbar{height:0;}
+  .frow button{height:24px; padding:0 8px; font-size:11.5px;}
+
+  #status{flex:none; display:flex; align-items:center; gap:14px; padding:6px 14px;
+    border-top:1px solid var(--line); background:var(--head-bg); color:var(--muted); font-size:11.5px;
+    font-family:Consolas,"Cascadia Mono","Courier New",monospace;}
+  #status .spacer{flex:1;}
+  #status .bad{color:var(--danger);}
+  #status .ok{color:var(--accent);}
+
+  /* ===== about dialog =====
+     Same skeleton as the Text Comparer's: title + version chip + build date, one-line
+     blurb, a 2 x 2 grid of accent-barred points, then the author line above the buttons. */
+  #veil{position:fixed; inset:0; background:rgba(0,0,0,.35); display:none; align-items:center; justify-content:center; z-index:50;}
+  #veil.on{display:flex;}
+  .dlg{width:min(600px,92vw); background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:18px 20px;
+    box-shadow:0 18px 50px rgba(0,0,0,.35);}
+  .dlg h3{display:flex; align-items:center; gap:8px; margin:0; font-size:17px;}
+  .dlg h3 .vtag{font-size:11px; font-weight:600; color:#fff; background:var(--accent); border-radius:4px; padding:1px 7px;}
+  .ab-date{margin-left:auto; font:600 11.5px/1 Consolas,"Cascadia Mono","Courier New",monospace; color:var(--accent);
+    background:var(--accent-soft); border:1px solid var(--soft-line-a); border-radius:6px; padding:5px 9px;}
+  .ab-blurb{font-size:12.5px; color:var(--muted); line-height:1.6; margin:8px 0 15px;}
+  .ab-grid{display:grid; grid-template-columns:1fr 1fr; gap:13px 16px;}
+  .ab-item{border-left:3px solid var(--soft-line-a); padding-left:10px;}
+  .ab-item .t{font-size:12.5px; font-weight:700;}
+  .ab-item .d{font-size:11.5px; color:var(--muted); line-height:1.55; margin-top:3px;}
+  .ab-foot{margin-top:16px; padding-top:11px; border-top:1px solid var(--line2);
+    font-size:12px; color:var(--muted); display:flex; gap:8px;}
+  .ab-foot b{color:var(--text);}
+  .dlg .btns{display:flex; justify-content:flex-end; margin-top:14px;}
+</style>
+</head>
+<body>
+
+<div id="titlebar">
+  <span class="brand">⬡ GUID Assistant</span>
+  <button id="btnAbout" data-i18n="about"></button>
+  <span class="ver">__BB_VER__</span>
+  <span class="spacer"></span>
+  <button id="btnLang" title="Switch language / 切换界面语言">EN</button>
+</div>
+
+<div id="toolbar">
+  <div class="group"><span class="cap" data-i18n="capGen"></span>
+    <span class="fld"><span class="fl" data-i18n="fCount"></span>
+      <input id="cnt" type="text" class="cnt" value="1"></span>
+    <span class="fld"><span class="fl" data-i18n="fVersion"></span>
+      <select id="ver" class="ver">
+        <option value="4" data-i18n="verV4">v4 · random</option>
+        <option value="7" data-i18n="verV7">v7 · time-ordered</option>
+      </select></span>
+    <button id="btnGen" class="primary" data-i18n="btnGen"></button>
+  </div>
+
+  <div class="group"><span class="cap" data-i18n="capInput"></span>
+    <button id="btnPaste" data-i18n="btnPaste"></button>
+    <button id="btnClear" data-i18n="btnClear"></button>
+    <button id="btnNormalize" data-i18n="btnNormalize"></button>
+  </div>
+
+  <div class="group"><span class="cap" data-i18n="capOptions"></span>
+    <label class="chk"><input type="checkbox" id="optUpper"><span data-i18n="optUpper"></span></label>
+  </div>
+
+  <div class="group"><span class="cap" data-i18n="capOutput"></span>
+    <button id="btnCopyAll" data-i18n="btnCopyAll"></button>
+    <button id="btnCopyEvery"></button>
+  </div>
+</div>
+
+<div id="verNote">
+  <span class="vn-tag" id="verNoteTag">v4</span>
+  <span class="vn-tx" id="verNoteTx"></span>
+</div>
+
+<div id="main">
+  <div id="inWrap">
+    <div id="inHead"><span data-i18n="inLabel"></span><span class="spacer"></span>
+      <span id="inHint" data-i18n="inHint"></span></div>
+    <textarea id="in" spellcheck="false"></textarea>
+  </div>
+
+  <div id="fmtHead"><span data-i18n="fmtLabel"></span><span class="spacer"></span><span id="fmtCount"></span></div>
+  <div id="fmtList"></div>
+</div>
+
+<div id="status"><span id="stMsg"></span><span class="spacer"></span><span id="stRight"></span></div>
+
+<div id="veil">
+  <div class="dlg">
+    <h3><span>GUID Assistant</span><span class="vtag">__BB_VER__</span><span class="ab-date" id="abDate"></span></h3>
+    <div class="ab-blurb" data-i18n="aboutBlurb"></div>
+    <div class="ab-grid" id="aboutGrid"></div>
+    <div class="ab-foot"><b data-i18n="aboutAuthor"></b><span data-i18n="aboutAuthorName"></span></div>
+    <div class="btns"><button id="btnAboutClose" class="primary" data-i18n="close"></button></div>
+  </div>
+</div>
+
+<script>
+(function(){
+  'use strict';
+  var vscode = acquireVsCodeApi();
+  var saved = vscode.getState() || {};
+
+  /* ---------------- i18n ---------------- */
+  var I18N = {
+    en: {
+      about:'About', close:'Close',
+      aboutBlurb:'Every GUID is written out in nine formats at once, and anything you paste is parsed back into all of them.',
+      aboutT1:'Nine formats', aboutD1:'D / N / B / P, C struct, UEFI #define, EFI bytes, raw bytes and Base64.',
+      aboutT2:'Any input', aboutD2:'Paste Base64, a 0x list or plain hex — dashes, braces and case are all optional.',
+      aboutT3:'Byte exact', aboutD3:'The EFI array keeps the little-endian layout, so it pastes straight into C.',
+      aboutT4:'v4 or v7', aboutD4:'v4 is 122 random bits — no time, no MAC, not sortable. v7 starts with a millisecond timestamp, so it sorts by creation time.',
+      aboutAuthor:'Author', aboutAuthorName:'Suyu Diao, Firmware Engineer In LCFC',
+      capGen:'Generate', capInput:'Input', capOptions:'Options', capOutput:'Output',
+      fCount:'Count', fVersion:'Version',
+      verV4:'v4 · random', verV7:'v7 · time-ordered',
+      noteV4:'v4 · random — 122 random bits, no timestamp and no MAC address, so a v4 can never be traced back to the machine that made it. Unordered: use it for protocol fields, ACPI / EFI tables and anything that must stay opaque.',
+      noteV7:'v7 · time-ordered — the first 48 bits are a Unix millisecond timestamp, so values sort by creation time and stay unique per millisecond. Use it for IDs you index, sort or read off a log.',
+      btnGen:'Generate', btnPaste:'Paste', btnClear:'Clear', btnNormalize:'Normalize',
+      btnCopyAll:'Copy formats', btnCopyEvery:'Copy all GUIDs', btnCopyEveryN:'Copy all GUIDs ×{n}',
+      tipCopyAll:'All nine formats of the GUID under the caret',
+      tipCopyEvery:'All nine formats of every GUID in the input, one blank line between GUIDs',
+      optUpper:'Uppercase',
+      inLabel:'GUID input', inHint:'one per line · any format is recognised',
+      fmtLabel:'Output formats',
+      stEmpty:'Paste a GUID above, or press Generate.',
+      stBad:'Line {n} is not a GUID.',
+      stOk:'{n} GUID(s) · {m} formats',
+      stCopied:'Copied',
+      stCopiedAll:'Copied {m} values · {n} GUIDs × 9 formats',
+      fmtMulti:'{n} GUIDs — the list shows the caret line · “Copy all GUIDs ×{n}” exports every one',
+      fmtD:'D · registry', fmtN:'N · no dashes', fmtB:'B · braces', fmtP:'P · parens',
+      fmtC:'C struct', fmtDef:'UEFI #define', fmtEfi:'EFI bytes', fmtRaw:'raw bytes', fmtB64:'Base64'
+    },
+    zh: {
+      about:'关于', close:'关闭',
+      aboutBlurb:'每个 GUID 一次性给出九种写法；粘贴任意一种，其余几种全部还原出来。',
+      aboutT1:'九种写法', aboutD1:'注册表 D / N / B / P、C 结构体、UEFI #define、EFI 数组、原始字节、Base64。',
+      aboutT2:'任意输入', aboutD2:'Base64、0x 列表、纯 hex 都认；短横线、花括号、大小写都可以省。',
+      aboutT3:'字节精确', aboutD3:'EFI 数组按小端顺序排，直接贴进 C 代码就能用。',
+      aboutT4:'v4 与 v7', aboutD4:'v4 是 122 位纯随机，不含时间、不含 MAC，不可排序；v7 前 48 位是毫秒时间戳，生成值按时间递增。',
+      aboutAuthor:'作者', aboutAuthorName:'Suyu Diao, Firmware Engineer In LCFC',
+      capGen:'生成', capInput:'输入', capOptions:'选项', capOutput:'输出',
+      fCount:'数量', fVersion:'版本',
+      verV4:'v4 · 随机', verV7:'v7 · 按时间',
+      noteV4:'v4 · 随机 —— 122 位随机数，不含时间戳、不含 MAC 地址，无法倒推是哪台机器生成的。顺序被打乱，适合协议字段、ACPI / EFI 表这类需要保持不透明的场景。',
+      noteV7:'v7 · 按时间排序 —— 前 48 位是 Unix 毫秒时间戳，生成值按时间自然递增、同毫秒内仍唯一。适合要排序、要建索引、要从日志里读出先后的 ID。',
+      btnGen:'生成', btnPaste:'粘贴', btnClear:'清空', btnNormalize:'规范化',
+      btnCopyAll:'复制全部格式', btnCopyEvery:'复制所有 GUID', btnCopyEveryN:'全部 GUID ×{n}',
+      tipCopyAll:'光标所在 GUID 的九种格式',
+      tipCopyEvery:'输入里每个 GUID 的九种格式，GUID 之间空一行',
+      optUpper:'大写',
+      inLabel:'GUID 输入', inHint:'一行一个 · 自动识别格式',
+      fmtLabel:'输出格式',
+      stEmpty:'在上面粘贴一个 GUID，或点「生成」。',
+      stBad:'第 {n} 行不是有效的 GUID。',
+      stOk:'{n} 个 GUID · {m} 种格式',
+      stCopied:'已复制',
+      stCopiedAll:'已复制 {m} 个值 · {n} 个 GUID × 9 种格式',
+      fmtMulti:'{n} 个 GUID —— 下面只显示光标所在行 · 「全部 GUID ×{n}」可一次导出全部',
+      fmtD:'D · 注册表', fmtN:'N · 无连字符', fmtB:'B · 大括号', fmtP:'P · 圆括号',
+      fmtC:'C 结构体', fmtDef:'UEFI #define', fmtEfi:'EFI 字节', fmtRaw:'原始字节', fmtB64:'Base64'
+    }
+  };
+  /* English first: every tool opens in English until the user picks Chinese */
+  var lang = (saved.lang === 'zh' || saved.lang === 'en') ? saved.lang : 'en';
+  function t(k){ return (I18N[lang] && I18N[lang][k]) || I18N.en[k] || k; }
+  function fill(s, o){ return String(s).replace(/\{(\w+)\}/g, function(_, k){ return o[k] != null ? o[k] : ''; }); }
+  function esc(s){ return String(s).replace(/[&<>"]/g, function(c){ return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+
+  var el = {};
+  ['btnAbout','btnLang','cnt','ver','btnGen','btnPaste','btnClear','btnNormalize','optUpper',
+   'btnCopyAll','btnCopyEvery','in','inHint','fmtList','fmtCount','stMsg','stRight','veil','btnAboutClose',
+   'abDate','aboutGrid','verNoteTag','verNoteTx'].forEach(function(id){
+    el[id] = document.getElementById(id);
+  });
+
+  /* ---------------- GUID core ----------------
+     A GUID is held as the canonical 32 lowercase hex digits. Every other shape
+     (dashes, braces, C source, EFI byte order, Base64) is derived from that. */
+  function hex32(s){ return /^[0-9a-fA-F]{32}$/.test(s) ? s.toLowerCase() : null; }
+  function groups(h){ return [h.slice(0,8), h.slice(8,12), h.slice(12,16), h.slice(16,20), h.slice(20,32)]; }
+  function fmtD(h){ return groups(h).join('-'); }
+
+  /* Bytes as they sit in memory: Data1/2/3 little endian, the last 8 bytes as-is. */
+  function efiBytes(h){
+    var g = groups(h), out = [], i;
+    for (i = 3; i >= 0; i--) out.push(g[0].substr(i * 2, 2));
+    for (i = 1; i >= 0; i--) out.push(g[1].substr(i * 2, 2));
+    for (i = 1; i >= 0; i--) out.push(g[2].substr(i * 2, 2));
+    var tail = g[3] + g[4];
+    for (i = 0; i < 16; i += 2) out.push(tail.substr(i, 2));
+    return out;
+  }
+  /* Inverse of efiBytes: 16 memory bytes back to canonical hex. */
+  function fromEfiBytes(b){
+    return b[3] + b[2] + b[1] + b[0]
+         + b[5] + b[4]
+         + b[7] + b[6]
+         + b.slice(8, 16).join('');
+  }
+
+  function parseOne(raw){
+    if (!raw) return null;
+    var s = String(raw).trim();
+    if (!s) return null;
+
+    /* Base64 of exactly 16 bytes */
+    if (/^[A-Za-z0-9+/]{22}==$/.test(s)) {
+      try {
+        var bin = atob(s), bytes = [];
+        for (var i = 0; i < bin.length; i++) bytes.push(bin.charCodeAt(i));
+        if (bytes.length === 16) return fromEfiBytes(bytes.map(function(v){ return ('0' + v.toString(16)).slice(-2); }));
+      } catch (e) { /* fall through to the text forms */ }
+    }
+
+    /* Anything with 0x in it: a C struct literal or a plain byte array */
+    if (/0x/i.test(s)) {
+      var big = s.match(/0x[0-9a-fA-F]+/g) || [];
+      if (big.length === 11) {
+        var padded = big.map(function(v, i){
+          var width = i === 0 ? 8 : (i <= 2 ? 4 : 2);
+          var x = v.replace(/^0x/i, '').toLowerCase();
+          while (x.length < width) x = '0' + x;
+          return x.slice(-width);
+        });
+        return padded[0] + padded[1] + padded[2] + padded.slice(3).join('');
+      }
+      if (big.length === 16 && big.every(function(v){ return v.length <= 4; })) {
+        return fromEfiBytes(big.map(function(v){ return ('0' + parseInt(v.slice(2), 16).toString(16)).slice(-2); }));
+      }
+      return null;
+    }
+
+    /* Plain hex: braces, parens, dashes, spaces and colons are all allowed */
+    return hex32(s.replace(/[{}()\s:-]/g, ''));
+  }
+
+  function parseAll(text){
+    var lines = String(text || '').split(/\r?\n/), out = [], bad = 0;
+    lines.forEach(function(line){
+      if (!line.trim()) return;
+      var h = parseOne(line);
+      if (h) out.push(h); else bad++;
+    });
+    return { list: out, bad: bad };
+  }
+
+  function formats(h){
+    var g = groups(h), efi = efiBytes(h), up = el.optUpper.checked;
+    var hx = function(x){ return '0x' + (up ? x.toUpperCase() : x); };
+    var D = fmtD(h), d = up ? D.toUpperCase() : D;
+    var tail = (g[3] + g[4]).match(/../g).map(hx).join(', ');
+    var struct = '{ ' + hx(g[0]) + ', ' + hx(g[1]) + ', ' + hx(g[2]) + ', { ' + tail + ' } }';
+    var raw = h.match(/../g).map(hx).join(', ');
+    var b64 = '';
+    try {
+      var bin = '';
+      efi.forEach(function(x){ bin += String.fromCharCode(parseInt(x, 16)); });
+      b64 = btoa(bin);
+    } catch (e) { b64 = ''; }
+    return [
+      { tag:'D',       nm:t('fmtD'),   v:d },
+      { tag:'N',       nm:t('fmtN'),   v:d.replace(/-/g, '') },
+      { tag:'B',       nm:t('fmtB'),   v:'{' + d + '}' },
+      { tag:'P',       nm:t('fmtP'),   v:'(' + d + ')' },
+      { tag:'C',       nm:t('fmtC'),   v:struct },
+      { tag:'#define', nm:t('fmtDef'), v:'#define MY_GUID ' + struct },
+      { tag:'EFI',     nm:t('fmtEfi'), v:efi.map(hx).join(', ') },
+      { tag:'RAW',     nm:t('fmtRaw'), v:raw },
+      { tag:'B64',     nm:t('fmtB64'), v:b64 }
+    ];
+  }
+
+  /* ---------------- generator ---------------- */
+  function rand16(){
+    var b = new Uint8Array(16);
+    if (window.crypto && crypto.getRandomValues) crypto.getRandomValues(b);
+    else for (var i = 0; i < 16; i++) b[i] = Math.floor(Math.random() * 256);
+    return b;
+  }
+  function hx2(v){ return ('0' + v.toString(16)).slice(-2); }
+  /* v4 (RFC 4122): 122 random bits with the version nibble and the variant bits forced.
+     The bytes are already in canonical text order here — running them through
+     fromEfiBytes() would put the version nibble in the wrong byte. */
+  function makeV4(){
+    var b = rand16();
+    b[6] = (b[6] & 0x0f) | 0x40;
+    b[8] = (b[8] & 0x3f) | 0x80;
+    return Array.prototype.map.call(b, hx2).join('');
+  }
+  /* v7 (RFC 9562): 48-bit big-endian Unix time in ms, then 4-bit version, 12 random
+     bits, 2-bit variant and 62 random bits. Because the timestamp sits in the most
+     significant bytes, the normal D form sorts in creation order as plain text. */
+  function makeV7(){
+    var b = rand16();
+    var ts = BigInt(Date.now());
+    for (var i = 0; i < 6; i++) b[i] = Number((ts >> BigInt(8 * (5 - i))) & 0xffn);
+    b[6] = (b[6] & 0x0f) | 0x70;
+    b[8] = (b[8] & 0x3f) | 0x80;
+    return Array.prototype.map.call(b, hx2).join('');
+  }
+  function make(v){ return v === '7' ? makeV7() : makeV4(); }
+
+  /* ---------------- render ---------------- */
+  var current = null;
+
+  /* The line the caret sits on; falls back to the first non-empty line. */
+  function activeLine(){
+    var v = el.in.value;
+    if (!v.trim()) return '';
+    var pos = (document.activeElement === el.in) ? (el.in.selectionStart || 0) : 0;
+    var lines = v.split(/\r?\n/), acc = 0, pick = '';
+    for (var i = 0; i < lines.length; i++) {
+      acc += lines[i].length + 1;
+      if (pos < acc) { pick = lines[i]; break; }
+    }
+    if (!parseOne(pick)) {
+      for (var j = 0; j < lines.length; j++) if (parseOne(lines[j])) { pick = lines[j]; break; }
+    }
+    return pick;
+  }
+
+  var copyTimer = 0;
+  function copy(text, btn){
+    vscode.postMessage({ type:'copy', text: text });
+    if (btn) {
+      var old = btn.textContent;
+      btn.textContent = t('stCopied');
+      clearTimeout(copyTimer);
+      setTimeout(function(){ btn.textContent = old; }, 900);
+    }
+    el.stMsg.textContent = t('stCopied');
+    el.stMsg.className = 'ok';
+  }
+
+  function render(){
+    var parsed = parseAll(el.in.value);
+    el.fmtList.textContent = '';
+    /* Second copy button: every format of every GUID at once. It only makes sense once the
+       input holds more than one GUID, so it stays disabled (and says why) until then. */
+    var nAll = parsed.list.length;
+    el.btnCopyEvery.textContent = nAll >= 2 ? fill(t('btnCopyEveryN'), { n: nAll }) : t('btnCopyEvery');
+    el.btnCopyEvery.disabled = nAll < 2;
+    el.btnCopyEvery.title = t('tipCopyEvery');
+    el.btnCopyAll.title = t('tipCopyAll');
+
+    if (!parsed.list.length) {
+      current = null;
+      el.stMsg.textContent = parsed.bad ? fill(t('stBad'), { n: parsed.bad }) : t('stEmpty');
+      el.stMsg.className = parsed.bad ? 'bad' : '';
+      el.fmtCount.textContent = '';
+      el.stRight.textContent = '';
+      el.btnCopyAll.disabled = true;
+      return;
+    }
+
+    current = parseOne(activeLine()) || parsed.list[0];
+    var rows = formats(current);
+    rows.forEach(function(r){
+      var div = document.createElement('div');
+      div.className = 'frow';
+      var tag = document.createElement('span'); tag.className = 'tag'; tag.textContent = r.tag;
+      var nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = r.nm; nm.title = r.nm;
+      var code = document.createElement('code'); code.textContent = r.v; code.title = r.v;
+      var btn = document.createElement('button'); btn.textContent = lang === 'zh' ? '复制' : 'Copy';
+      btn.addEventListener('click', function(){ copy(r.v, btn); });
+      div.appendChild(tag); div.appendChild(nm); div.appendChild(code); div.appendChild(btn);
+      el.fmtList.appendChild(div);
+    });
+
+    /* More than one GUID: the list only ever shows the caret line, so point at the button that
+       exports every one of them instead of leaving the user to copy nine rows at a time */
+    el.fmtCount.textContent = parsed.list.length > 1
+      ? fill(t('fmtMulti'), { n: parsed.list.length })
+      : '';
+    el.stMsg.textContent = parsed.bad
+      ? fill(t('stBad'), { n: parsed.bad })
+      : fill(t('stOk'), { n: parsed.list.length, m: rows.length });
+    el.stMsg.className = parsed.bad ? 'bad' : '';
+    el.stRight.textContent = (el.optUpper.checked ? 'UPPER' : 'lower');
+    el.btnCopyAll.disabled = false;
+  }
+
+  /* ---------------- actions ---------------- */
+  el.btnGen.addEventListener('click', function(){
+    var n = parseInt(el.cnt.value, 10);
+    if (!(n > 0)) n = 1;
+    if (n > 200) n = 200;
+    el.cnt.value = String(n);
+    var list = [];
+    for (var i = 0; i < n; i++) list.push(fmtD(make(el.ver.value)));
+    el.in.value = list.join('\n');
+    el.in.focus();
+    el.in.setSelectionRange(0, 0);
+    render();
+  });
+
+  el.btnClear.addEventListener('click', function(){
+    el.in.value = '';
+    el.in.focus();
+    render();
+  });
+
+  el.btnNormalize.addEventListener('click', function(){
+    var parsed = parseAll(el.in.value);
+    if (!parsed.list.length) { render(); return; }
+    el.in.value = parsed.list.map(fmtD).join('\n');
+    render();
+  });
+
+  el.btnPaste.addEventListener('click', function(){
+    vscode.postMessage({ type: 'readClipboard' });
+  });
+
+  el.btnCopyAll.addEventListener('click', function(){
+    if (!current) return;
+    copy(formats(current).map(function(r){ return r.v; }).join('\n'));
+  });
+
+  /* Every format of every GUID at once — the reason a batch generate is useful: one paste
+     gives you all the forms for all of them. One blank line between GUIDs keeps the blocks apart. */
+  el.btnCopyEvery.addEventListener('click', function(){
+    var parsed = parseAll(el.in.value);
+    if (parsed.list.length < 2) return;
+    var blocks = parsed.list.map(function(h){
+      return formats(h).map(function(r){ return r.v; }).join('\n');
+    });
+    copy(blocks.join('\n\n'), el.btnCopyEvery);
+    el.stMsg.textContent = fill(t('stCopiedAll'), { n: blocks.length, m: blocks.length * 9 });
+    el.stMsg.className = 'ok';
+  });
+
+  el.in.addEventListener('input', render);
+  el.in.addEventListener('click', render);
+  el.in.addEventListener('keyup', render);
+  el.optUpper.addEventListener('change', function(){ saveState(); render(); });
+
+  /* The about box is rebuilt on every open so it follows a language switch
+     without a reload; the date is the build day, like the other two tools. */
+  function renderAbout(){
+    el.abDate.textContent = new Date().toISOString().slice(0, 10);
+    el.aboutGrid.innerHTML = ['1', '2', '3', '4'].map(function(i){
+      return '<div class="ab-item"><div class="t">' + esc(t('aboutT' + i)) + '</div>' +
+             '<div class="d">' + esc(t('aboutD' + i)) + '</div></div>';
+    }).join('');
+  }
+  el.btnAbout.addEventListener('click', function(){ renderAbout(); el.veil.classList.add('on'); });
+  el.btnAboutClose.addEventListener('click', function(){ el.veil.classList.remove('on'); });
+  el.veil.addEventListener('click', function(e){ if (e.target === el.veil) el.veil.classList.remove('on'); });
+
+  /* The note line under the toolbar always describes the version the select is on,
+     so the v4 / v7 difference is readable without opening anything. */
+  function updateVerNote(){
+    var v = el.ver.value === '7' ? '7' : '4';
+    el.verNoteTag.textContent = 'v' + v;
+    el.verNoteTx.textContent = t(v === '7' ? 'noteV7' : 'noteV4');
+  }
+
+  /* ---------------- language / state ---------------- */
+  function saveState(){ vscode.setState({ lang: lang, ver: el.ver.value }); }
+
+  function applyLang(){
+    document.querySelectorAll('[data-i18n]').forEach(function(n){
+      var k = n.getAttribute('data-i18n');
+      if (I18N[lang][k]) n.textContent = I18N[lang][k];
+    });
+    el.btnLang.textContent = lang === 'zh' ? 'EN' : '中文';
+    document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
+    document.querySelectorAll('.frow button').forEach(function(b){ b.textContent = lang === 'zh' ? '复制' : 'Copy'; });
+    updateVerNote();
+    render();
+  }
+
+  el.btnLang.addEventListener('click', function(){
+    lang = lang === 'zh' ? 'en' : 'zh';
+    saveState();
+    applyLang();
+  });
+  el.ver.addEventListener('change', function(){ updateVerNote(); saveState(); });
+
+  /* ---------------- host messages ---------------- */
+  window.addEventListener('message', function(ev){
+    var m = ev.data; if (!m || !m.type) return;
+    if (m.type === 'clipboard') {
+      var txt = String(m.text || '').trim();
+      if (!txt) return;
+      el.in.value = txt;
+      el.in.focus();
+      render();
+    }
+  });
+
+  /* ---------------- boot ---------------- */
+  if (saved.ver === '4' || saved.ver === '7') el.ver.value = saved.ver;
+  applyLang();
+  vscode.postMessage({ type: 'ready' });
+})();
+</script>
+</body>
+</html>

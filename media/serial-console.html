@@ -1,0 +1,1935 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:;">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>COM Assistant</title>
+<style>
+  :root{
+    --bg:var(--vscode-editorWidget-background,#eef0f4);
+    --panel:var(--vscode-editor-background,#ffffff);
+    --line:var(--vscode-panel-border,#dfe2e9);
+    --line2:var(--vscode-editorWidget-border,#eceef3);
+    --text:var(--vscode-editor-foreground,#1f2430);
+    --muted:var(--vscode-descriptionForeground,#8a90a0);
+    --accent:var(--vscode-button-background,#2563eb);
+    --accent-hover:var(--vscode-button-hoverBackground,#1d4fd7);
+    --accent-soft:var(--vscode-list-hoverBackground,#eef2ff);
+    --input-bg:var(--vscode-input-background,#fff);
+    --input-ro:var(--vscode-input-background,#f4f5f9);
+    --group-bg:var(--vscode-editorWidget-background,#fcfcfe);
+    --head-bg:var(--vscode-sideBar-background,#f7f8fb);
+    --btn-active:#dbe6ff;
+    --danger:var(--vscode-errorForeground,#dc2626);
+    --danger-bg:#fef2f2;
+    --ok:#166534; --ok-bg:#ecfdf5;
+    --warn:#b45309; --warn-bg:#fef3c7;
+    --tx:#1d4ed8; --tx-bg:#eef2ff;
+    --rx:#1f2937;
+    --soft-line-a:rgba(37,99,235,.30);
+  }
+  body.vscode-dark, body.vscode-high-contrast{
+    /* Dark fallbacks: use --vscode-* when VS Code injects it, but the page must not render
+       light text on a light background when those variables are missing */
+    --bg:var(--vscode-editorWidget-background,#1e1e1e);
+    --panel:var(--vscode-editor-background,#1e1e1e);
+    --line:var(--vscode-panel-border,#3c3c3c);
+    --line2:var(--vscode-editorWidget-border,#343434);
+    --text:var(--vscode-editor-foreground,#e6e6e6);
+    --muted:var(--vscode-descriptionForeground,#a3a3a3);
+    --accent:var(--vscode-button-background,#3b82f6);
+    --accent-hover:#2563eb;
+    --input-bg:var(--vscode-input-background,#3c3c3c);
+    --input-ro:rgba(255,255,255,.06);
+    --group-bg:var(--vscode-editorWidget-background,#252526);
+    --head-bg:var(--vscode-sideBar-background,#252526);
+    --btn-active:rgba(37,99,235,.35);
+    --accent-soft:rgba(37,99,235,.22);
+    --danger-bg:rgba(220,38,38,.16);
+    --ok:#6ee7b7; --ok-bg:rgba(52,211,153,.14);
+    --warn:#fcd34d; --warn-bg:rgba(252,211,77,.14);
+    --tx:#93c5fd; --tx-bg:rgba(37,99,235,.16);
+    --rx:var(--vscode-editor-foreground,#d4d4d4);
+    --soft-line-a:rgba(37,99,235,.45);
+  }
+  *{box-sizing:border-box;}
+  html,body{height:100%;}
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:"Segoe UI","Microsoft YaHei UI","Microsoft YaHei","PingFang SC","Hiragino Sans GB","Noto Sans CJK SC",sans-serif; font-size:13px;
+    display:flex; flex-direction:column; overflow:hidden;
+  }
+  button, input[type=text], select{
+    font:inherit; border:1px solid var(--line); border-radius:6px;
+    background:var(--input-bg); color:var(--text); padding:4px 8px; height:28px;
+  }
+  button{cursor:pointer; white-space:nowrap;}
+  button:hover:not(:disabled){background:var(--accent-soft); border-color:var(--accent);}
+  button:active:not(:disabled){background:var(--btn-active);}
+  button:disabled{opacity:.5; cursor:not-allowed;}
+  button.primary{background:var(--accent); color:#fff; border-color:var(--accent);}
+  button.primary:hover:not(:disabled){background:var(--accent-hover); border-color:var(--accent-hover);}
+  button.danger{color:var(--danger); border-color:var(--line);}
+  button.on{background:var(--accent-soft); border-color:var(--accent); color:var(--accent); font-weight:600;}
+  select{cursor:pointer; padding:2px 4px;}
+  select:disabled, input:disabled{opacity:.55; cursor:not-allowed; background:var(--input-ro); color:var(--muted);}
+
+  /* ===== Title bar ===== */
+  #titlebar{background:var(--panel); border-bottom:1px solid var(--line); padding:7px 14px; display:flex; align-items:center; gap:10px;}
+  #titlebar .brand{font-weight:700; font-size:15px; letter-spacing:.5px; color:var(--accent);}
+  /* Written the same way as the Text Comparer title bar (same height, radius, font size and hover effect) */
+  #btnAbout{height:22px; padding:0 9px; font-size:11.5px; border-radius:11px; color:var(--muted);}
+  #btnAbout:hover{background:var(--accent-soft); border-color:var(--accent); color:var(--accent);}
+  #titlebar .spacer{flex:1;}
+  /* Same centring rule as the other three tools: the label sits dead centre of the box */
+  #btnLang{min-width:52px; height:24px; font-weight:600; font-size:12px;
+    display:inline-flex; align-items:center; justify-content:center;}
+  /* Version badge: font size, padding and radius match .ver in the Text Comparer */
+  .ver{font:600 10.5px/1 Consolas,"Cascadia Mono","Courier New","Microsoft YaHei UI","Microsoft YaHei","PingFang SC","Hiragino Sans GB",monospace; color:#fff; background:var(--accent); border-radius:4px; padding:3px 7px;}
+  #connPill{display:inline-flex; align-items:center; gap:6px; height:22px; padding:0 10px; border-radius:11px;
+    font-size:11.5px; font-weight:600; background:var(--group-bg); border:1px solid var(--line2); color:var(--muted);}
+  #connPill.on{background:var(--ok-bg); border-color:var(--ok); color:var(--ok);}
+  #connPill .dot{width:7px; height:7px; border-radius:50%; background:var(--muted);}
+  #connPill.on .dot{background:var(--ok);}
+
+  /* ===== Toolbar ===== */
+  #toolbar{background:var(--panel); border-bottom:1px solid var(--line); padding:12px 14px 10px; display:flex; flex-wrap:wrap; gap:12px; align-items:stretch;}
+  .group{position:relative; border:1px solid var(--line2); border-radius:9px; padding:13px 10px 8px;
+    background:var(--group-bg); display:flex; gap:6px; align-items:flex-end; flex-wrap:wrap; min-height:61px;
+    flex:0 0 auto;}
+  /* Controls inside a group must never shrink: shrinking clips their small labels (Parity / Stop / Flow) first */
+  .group > .fld, .group > .chk, .group > button, .group > .cap{flex:0 0 auto;}
+  .group .cap{position:absolute; top:-8px; left:9px; background:var(--panel); padding:0 5px; font-size:11px; color:var(--muted); letter-spacing:1px;}
+  .fld{display:inline-flex; flex-direction:column; gap:3px; align-items:stretch;}
+  .fl{font-size:10.5px; color:var(--muted); line-height:1; margin-left:1px; white-space:nowrap;}
+  .chk{display:inline-flex; align-items:center; gap:5px; color:var(--muted); user-select:none; height:28px;}
+  .chk input{margin:0;}
+  input.num{width:104px; font:12.5px Consolas,"Cascadia Mono","Courier New","Microsoft YaHei UI","Microsoft YaHei","PingFang SC","Hiragino Sans GB",monospace;}
+  input.num.small{width:72px; font:12.5px Consolas,"Cascadia Mono","Courier New","Microsoft YaHei UI","Microsoft YaHei","PingFang SC","Hiragino Sans GB",monospace;}
+  /* Port names (COM3 -- USB-Enhanced-SERIAL CH343 (COM3)) are far wider than a fixed width:
+   let the content size it, cap at 420px and fall back to the title tooltip when it still does not fit */
+  select#port{min-width:250px; max-width:420px; width:auto; font:12.5px Consolas,"Cascadia Mono","Courier New","Microsoft YaHei UI","Microsoft YaHei","PingFang SC","Hiragino Sans GB",monospace;}
+  select.sel{font:12.5px Consolas,"Cascadia Mono","Courier New","Microsoft YaHei UI","Microsoft YaHei","PingFang SC","Hiragino Sans GB",monospace;}
+  /* Baud rate: common values in the list, the free-form input only appears for Custom
+   (side by side, and only as wide as needed) */
+  .combo{display:inline-flex; gap:5px; align-items:center;}
+  select#baud{min-width:106px; font:12.5px Consolas,"Cascadia Mono","Courier New","Microsoft YaHei UI","Microsoft YaHei","PingFang SC","Hiragino Sans GB",monospace;}
+  input#baudFree{display:none; width:88px; font:12.5px Consolas,"Cascadia Mono","Courier New","Microsoft YaHei UI","Microsoft YaHei","PingFang SC","Hiragino Sans GB",monospace;}
+  input#baudFree.show{display:inline-block;}
+  .hint{font-size:11px; color:var(--muted); align-self:center;}
+
+  /* ===== Main area ===== */
+  #logWrap{flex:1; display:flex; flex-direction:column; min-height:0; background:var(--panel); position:relative;}
+  #log{flex:1; overflow:auto; padding:6px 14px 12px; font:12.5px/1.55 Consolas,"Cascadia Mono","Courier New","Microsoft YaHei UI","Microsoft YaHei","PingFang SC","Hiragino Sans GB",monospace; color:var(--rx); white-space:pre;}
+  #log.wrap{white-space:pre-wrap; word-break:break-all;}
+  /* Of a thousand-odd lines only a few dozen are on screen: let the renderer skip layout and paint for
+   the rest -- the most direct fix for "slower and slower over time" (same line count, but an order of
+   magnitude less to lay out per frame) */
+  #log .ln{min-height:1.55em; content-visibility:auto; contain-intrinsic-size:auto 19px;}
+  #log .ln.sys{color:var(--muted);}
+  #log .ln.err{color:var(--danger);}
+  #log .ln.tx{color:var(--tx);}
+  #log .ln .ts{color:var(--muted);}
+  #log .ln .ts + .txt{margin-left:0;}
+  #log .ln.tx .ts{color:var(--tx); opacity:.7;}
+  #log .hexln{white-space:pre; color:var(--rx);}
+  #log .hexln .off{color:var(--muted); margin-right:10px;}
+  #log .hexln .gut{margin-left:12px; color:var(--muted);}
+  #log .cursor{display:inline-block; width:7px; height:14px; background:currentColor; vertical-align:-2px; opacity:.5;}
+
+  /* ===== Find bar (Ctrl+F): sits right under the log header, never covering content ===== */
+  #findBar{flex:none; display:none; align-items:center; gap:6px; padding:5px 14px;
+    background:var(--head-bg); border-bottom:1px solid var(--line);}
+  #findBar.show{display:flex;}
+  #findInput{height:26px; width:220px; font:12.5px Consolas,"Cascadia Mono","Courier New","Microsoft YaHei UI","Microsoft YaHei","PingFang SC","Hiragino Sans GB",monospace;}
+  #findCount{font:11.5px Consolas,"Cascadia Mono","Courier New","Microsoft YaHei UI","Microsoft YaHei","PingFang SC","Hiragino Sans GB",monospace; color:var(--muted); min-width:56px; text-align:center;}
+  #findBar.none #findCount{color:var(--danger);}
+  #findBar button{height:26px; min-width:28px; padding:0 7px; font-size:12px; line-height:1;}
+  #findBar .ci{font-size:12px; color:var(--muted);}
+  /* Match highlight: pale yellow for the set, amber for the current one */
+  ::highlight(sc-find){background:rgba(250,204,21,.38);}
+  ::highlight(sc-find-cur){background:#f59e0b; color:#111;}
+
+  /* ===== Line numbers: display only, drawn from data-n, never part of the log text (copy / save / find unaffected) ===== */
+  /* Column width follows the digit count (--numw is written by the script from the highest line number):
+   numbers right-aligned, text left edges always on one vertical line, no jump from 4 to 5 digits */
+  #log.nums .ln::before{
+    content:attr(data-n); display:inline-block; width:var(--numw,4ch); margin-right:10px;
+    text-align:right; color:var(--muted); opacity:.7; user-select:none; -webkit-user-select:none;
+    font-variant-numeric:tabular-nums;
+  }
+
+  /* ===== Find all: results panel at the bottom (laid out like VS Code search results: line number + snippet) ===== */
+  /* Splitter between the log and the results panel: drag to resize, double-click for the default */
+  #resSplit{flex:none; display:none; height:9px; margin-bottom:-5px; position:relative; z-index:4;
+    cursor:ns-resize; background:transparent;}
+  #resSplit.show{display:block;}
+  /* Idle it is a small centred bar (clearly draggable); on hover or drag it takes the accent colour */
+  #resSplit::after{content:""; position:absolute; left:50%; top:3px; width:46px; height:3px;
+    margin-left:-23px; border-radius:2px; background:var(--line);
+    transition:background .12s, height .12s;}
+  #resSplit:hover::after, #resSplit.drag::after{background:var(--accent);}
+  #findRes{flex:none; display:none; flex-direction:column; min-height:90px; max-height:none;
+    border-top:1px solid var(--line); background:var(--panel);}
+  #findRes.show{display:flex;}
+  #findRes .frHead{flex:none; display:flex; align-items:center; gap:8px; padding:5px 14px;
+    background:var(--head-bg); border-bottom:1px solid var(--line);
+    font:11.5px Consolas,"Cascadia Mono","Courier New","Microsoft YaHei UI","Microsoft YaHei","PingFang SC","Hiragino Sans GB",monospace;
+    color:var(--muted);}
+  #findRes .frHead b{color:var(--text); font-weight:600;}
+  #findRes .frHead .grow{flex:1;}
+  #findRes .frHead button{height:23px; min-width:24px; padding:0 7px; font-size:11.5px; line-height:1;}
+  #frList{flex:1; overflow:auto; font:12.5px/1.65 Consolas,"Cascadia Mono","Courier New","Microsoft YaHei UI","Microsoft YaHei","PingFang SC","Hiragino Sans GB",monospace;}
+  #frList::-webkit-scrollbar{width:12px; height:12px;}
+  #frList::-webkit-scrollbar-thumb{background:var(--vscode-scrollbarSlider-background,rgba(120,130,150,.4));
+    border:3px solid transparent; background-clip:content-box; border-radius:10px;}
+  .frRow{display:flex; gap:10px; padding:1px 14px; cursor:pointer; white-space:pre; overflow:hidden;}
+  .frRow:hover{background:var(--accent-soft);}
+  .frRow.cur{background:var(--accent-soft); box-shadow:inset 2px 0 0 var(--accent);}
+  /* The line-number column width uses the same variable as the log: both digit columns end on one line */
+  .frRow .fln{flex:0 0 auto; min-width:var(--numw,4ch); width:auto; text-align:right;
+    color:var(--muted); font-variant-numeric:tabular-nums;}
+  .frRow .ftx{min-width:0; overflow:hidden; text-overflow:ellipsis; color:var(--text);}
+  .frRow mark{background:rgba(250,204,21,.40); color:inherit; border-radius:2px;}
+  .frRow.cur mark{background:#f59e0b; color:#111;}
+  /* A match that scrolled out of the display buffer: still visible and clickable, but the view cannot
+   jump to it any more, so dim it slightly. 0.55 read as "disabled" in dark themes, and it is still a
+   real hit -- keep it only a little dimmer than a live one. */
+  .frRow.gone .ftx{opacity:.82;}
+  .frRow.gone .fln{opacity:.7;}
+
+  /* History view: double-clicking a result that has scrolled out of the buffer rebuilds a read-only
+   window from the archive. Clicking the banner at the top returns to the live log. */
+  #histBar{
+    position:absolute; left:0; right:0; top:0; z-index:22;
+    display:flex; align-items:center; gap:10px; padding:4px 12px;
+    background:var(--off-bg); border-bottom:1px solid var(--line);
+    font-size:11.5px; color:var(--muted); box-shadow:0 2px 8px rgba(0,0,0,.18);
+  }
+  #histBar .grow{flex:1;}
+  #histBar button{height:22px; padding:0 9px; font-size:11.5px; border-radius:5px;}
+  #log .ln.histTarget{background:var(--accent-soft); box-shadow:inset 2px 0 0 var(--accent);}
+
+  /* ===== Context menu: drawn in-house so it follows the language setting (the built-in one follows the editor language and cannot be changed) ===== */
+  #ctxMenu{position:fixed; left:0; top:0; z-index:90; display:none; min-width:198px; padding:5px;
+    background:var(--panel); border:1px solid var(--line); border-radius:9px;
+    box-shadow:0 14px 34px rgba(15,23,42,.30);}
+  #ctxMenu.show{display:block;}
+  #ctxMenu button{display:flex; align-items:center; gap:9px; width:100%; height:29px; padding:0 9px;
+    background:transparent; border:1px solid transparent; border-radius:6px;
+    color:var(--text); font-size:12.5px; text-align:left;}
+  #ctxMenu button:hover:not(:disabled){background:var(--accent-soft); color:var(--accent); border-color:var(--soft-line-a);}
+  #ctxMenu button:disabled{opacity:.35; cursor:default;}
+  #ctxMenu .ci{width:15px; text-align:center; flex:none;}
+  #ctxMenu .kb{margin-left:auto; color:var(--muted); font:11px Consolas,"Cascadia Mono","Courier New","Microsoft YaHei UI","Microsoft YaHei","PingFang SC","Hiragino Sans GB",monospace;}
+  #ctxMenu .sep{display:block; height:1px; margin:4px 6px; background:var(--line2);}
+
+  /* ===== Send bar ===== */
+  #sendBar{flex:none; display:flex; gap:8px; align-items:flex-end; padding:9px 14px;
+    background:var(--panel); border-top:1px solid var(--line);}
+  #sendInput{flex:1; height:32px; font:13px Consolas,"Cascadia Mono","Courier New","Microsoft YaHei UI","Microsoft YaHei","PingFang SC","Hiragino Sans GB",monospace; min-width:120px;}
+  #sendBar .fld select, #sendBar .fld input{height:32px;}
+  #btnSend{height:32px; min-width:88px; font-weight:600;}
+
+  /* ===== Status bar ===== */
+  /* Status bar: same size, padding, gap and colours as the Binary Editor's,
+     so the three tools read as one product */
+  #statusbar{flex:none; display:flex; align-items:center; gap:18px; padding:6px 14px;
+    font:12px Consolas,"Cascadia Mono","Courier New","Microsoft YaHei UI","Microsoft YaHei","PingFang SC","Hiragino Sans GB",monospace;
+    color:var(--muted); background:var(--panel); border-top:1px solid var(--line);}
+  /* Same rule as the Binary Editor: label in muted grey, value in body colour and bold */
+  #statusbar b{color:var(--text); font-weight:600;}
+  #statusbar .grow{flex:1;}
+  #statusMsg{color:var(--muted);}
+  #statusMsg.err{color:var(--danger);}
+  #statusMsg.ok{color:var(--ok);}
+
+  /* ===== About ===== */
+  #veil{position:fixed; inset:0; background:rgba(15,23,42,.42); display:none; align-items:center; justify-content:center; z-index:50;}
+  #veil.show{display:flex;}
+  .dlg{background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:10px;
+    box-shadow:0 14px 40px rgba(15,23,42,.28); padding:18px 20px; width:min(520px,92vw);}
+  .dlg h3{margin:0 0 6px; font-size:16px; display:flex; align-items:center; gap:8px;}
+  .dlg h3 .vtag{font-size:11px; font-weight:600; color:#fff; background:var(--accent); border-radius:4px; padding:1px 7px;}
+  .dlg .blurb{font-size:12.5px; color:var(--muted); line-height:1.6; margin:6px 0 12px;}
+  .dlg .kv{display:grid; grid-template-columns:auto 1fr; gap:5px 12px; font-size:12px; margin-bottom:12px;}
+  .dlg .kv b{font-weight:600; color:var(--text); white-space:nowrap;}
+  .dlg .kv span{color:var(--muted);}
+  .dlg .btns{display:flex; justify-content:flex-end; gap:8px;}
+  /* About dialog: same layout as the Binary Editor -- title + date badge / one-line summary / four capability cells / author */
+  .dlg.about{width:min(560px,92vw); padding:18px 20px;}
+  .dlg.about h3{margin:0; font-size:17px;}
+  .ab-head{display:flex; align-items:center; justify-content:space-between; gap:12px;}
+  .ab-date{display:flex; align-items:center; gap:6px; font:600 11.5px/1 Consolas,"Cascadia Mono","Courier New","Microsoft YaHei UI","Microsoft YaHei","PingFang SC","Hiragino Sans GB",monospace;
+    color:var(--accent); background:var(--accent-soft); border:1px solid var(--soft-line-a);
+    border-radius:6px; padding:5px 9px; white-space:nowrap;}
+  .ab-date i{font-style:normal; font-weight:600; color:var(--muted); font-size:10.5px; letter-spacing:.6px;}
+  .ab-blurb{font-size:12.5px; color:var(--muted); line-height:1.55; margin:7px 0 15px;}
+  .ab-grid{display:grid; grid-template-columns:1fr 1fr; gap:13px 16px;}
+  .ab-item{border-left:3px solid var(--soft-line-a); padding-left:10px;}
+  .ab-item .t{font-size:12.5px; font-weight:700; color:var(--text);}
+  .ab-item .d{font-size:11.5px; color:var(--muted); line-height:1.55; margin-top:3px;}
+  .ab-foot{display:flex; gap:8px; align-items:baseline; margin-top:16px; padding-top:11px;
+    border-top:1px solid var(--line2); font-size:12px; color:var(--muted);}
+  .ab-foot b{color:var(--text); font-weight:600;}
+  .dlg.about .btns{margin-top:14px;}
+  kbd{font:11px Consolas,"Cascadia Mono","Courier New","Microsoft YaHei UI","Microsoft YaHei","PingFang SC","Hiragino Sans GB",monospace; background:var(--group-bg); border:1px solid var(--line2); border-radius:4px; padding:1px 5px;}
+
+  /* Scrollbars follow the theme */
+  #log::-webkit-scrollbar{width:12px; height:12px;}
+  #log::-webkit-scrollbar-thumb{background:var(--vscode-scrollbarSlider-background,rgba(120,130,150,.4));
+    border:3px solid transparent; background-clip:content-box; border-radius:10px;}
+  @media (max-width:1000px){ select#port{min-width:190px; max-width:300px;} .hint{display:none;} }
+</style>
+</head>
+<body>
+
+<div id="titlebar">
+  <span class="brand">⬡ COM Assistant</span>
+  <button id="btnAbout" data-i18n-title="aboutTip" data-i18n="aboutBtn"></button>
+  <span class="ver">__BB_VER__</span>
+  <span class="spacer"></span>
+  <span id="connPill"><span class="dot"></span><span id="connText"></span></span>
+  <button id="btnLang" title="Switch language / 切换界面语言">EN</button>
+</div>
+
+<div id="toolbar">
+  <div class="group"><span class="cap" data-i18n="capPort"></span>
+    <span class="fld">
+      <select id="port" data-i18n-title="portTip"></select>
+    </span>
+    <button id="btnReload" data-i18n-title="reloadTip">⟳</button>
+  </div>
+
+  <div class="group"><span class="cap" data-i18n="capUart"></span>
+    <span class="fld"><span class="fl" data-i18n="lblBaud"></span>
+      <span class="combo">
+        <select id="baud" class="sel" data-i18n-title="baudTip"></select>
+        <input id="baudFree" type="text" inputmode="numeric" value="" data-i18n-title="baudTip">
+      </span>
+    </span>
+    <span class="fld"><span class="fl" data-i18n="lblData"></span>
+      <select id="dataBits" class="sel"></select>
+    </span>
+    <span class="fld"><span class="fl" data-i18n="lblParity"></span>
+      <select id="parity" class="sel"></select>
+    </span>
+    <span class="fld"><span class="fl" data-i18n="lblStop"></span>
+      <select id="stopBits" class="sel"></select>
+    </span>
+    <span class="fld"><span class="fl" data-i18n="lblFlow"></span>
+      <select id="flow" class="sel"></select>
+    </span>
+  </div>
+
+  <div class="group"><span class="cap" data-i18n="capLine"></span>
+    <label class="chk" data-i18n-title="dtrTip"><input type="checkbox" id="dtr" checked><span>DTR</span></label>
+    <label class="chk" data-i18n-title="rtsTip"><input type="checkbox" id="rts" checked><span>RTS</span></label>
+    <button id="btnReset" data-i18n-title="resetTip" data-i18n="resetBtn"></button>
+  </div>
+
+  <div class="group"><span class="cap" data-i18n="capConn"></span>
+    <button id="btnConn" class="primary" data-i18n-title="connTip"></button>
+    <button id="btnClear" data-i18n-title="clearTip" data-i18n="clearBtn"></button>
+  </div>
+
+  <div class="group"><span class="cap" data-i18n="capView"></span>
+    <label class="chk"><input type="checkbox" id="optHex"><span data-i18n="optHex"></span></label>
+    <label class="chk"><input type="checkbox" id="optTs" checked><span data-i18n="optTs"></span></label>
+    <label class="chk"><input type="checkbox" id="optAuto" checked><span data-i18n="optAuto"></span></label>
+    <label class="chk"><input type="checkbox" id="optWrap"><span data-i18n="optWrap"></span></label>
+    <label class="chk" data-i18n-title="optNumsTip"><input type="checkbox" id="optNums" checked><span data-i18n="optNums"></span></label>
+  </div>
+
+  <div class="group"><span class="cap" data-i18n="capLog"></span>
+    <button id="btnFind" data-i18n-title="findTip" data-i18n="findBtn"></button>
+    <button id="btnCopy" data-i18n-title="copyTip" data-i18n="copyBtn"></button>
+    <button id="btnSave" data-i18n-title="saveTip" data-i18n="saveBtn"></button>
+  </div>
+</div>
+
+<div id="logWrap">
+  <div id="findBar">
+    <span class="ci">🔍</span>
+    <input id="findInput" type="text" data-i18n-ph="findPh" autocomplete="off" spellcheck="false">
+    <span id="findCount">0/0</span>
+    <button id="findPrev" data-i18n-title="findPrevTip">↑</button>
+    <button id="findNext" data-i18n-title="findNextTip">↓</button>
+    <button id="findAll" data-i18n-title="findAllTip" data-i18n="findAllBtn"></button>
+    <button id="findClose" data-i18n-title="findCloseTip">✕</button>
+  </div>
+  <div id="log" tabindex="0"></div>
+  <div id="resSplit" data-i18n-title="resSplitTip"></div>
+  <div id="findRes">
+    <div class="frHead">
+      <b data-i18n="frTitle"></b>
+      <span id="frSum"></span>
+      <span class="grow"></span>
+      <button id="frClose" data-i18n-title="frCloseTip">✕</button>
+    </div>
+    <div id="frList"></div>
+  </div>
+</div>
+
+<div id="sendBar">
+  <span class="fld"><span class="fl" data-i18n="lblSendAs"></span>
+    <select id="sendEnc" class="sel">
+      <option value="text">Text</option>
+      <option value="hex">HEX</option>
+    </select>
+  </span>
+  <input id="sendInput" type="text" data-i18n-ph="sendPh" autocomplete="off" spellcheck="false">
+  <span class="fld"><span class="fl" data-i18n="lblEol"></span>
+    <select id="eol" class="sel">
+      <option value="crlf">CRLF</option>
+      <option value="lf">LF</option>
+      <option value="cr">CR</option>
+      <option value="none">None</option>
+    </select>
+  </span>
+  <span class="fld"><span class="fl" data-i18n="lblRepeat"></span>
+    <input id="repeatMs" class="num small" type="text" value="0" data-i18n-title="repeatTip">
+  </span>
+  <button id="btnSend" class="primary" data-i18n="sendBtn"></button>
+</div>
+
+<div id="statusbar">
+  <span><span data-i18n="stPort"></span> <b id="statusPort">—</b></span>
+  <span><span data-i18n="stCfg"></span> <b id="statusCfg">115200 8N1</b></span>
+  <span><span data-i18n="stRx"></span> <b id="statusRx">0 B</b></span>
+  <span><span data-i18n="stTx"></span> <b id="statusTx">0 B</b></span>
+  <span class="grow"></span>
+  <span id="statusMsg"></span>
+</div>
+
+<div id="ctxMenu">
+  <button id="ctxCut"><span class="ci">✂</span><span data-i18n="ctxCut"></span><span class="kb">Ctrl+X</span></button>
+  <button id="ctxCopy"><span class="ci">📋</span><span data-i18n="ctxCopy"></span><span class="kb">Ctrl+C</span></button>
+  <button id="ctxPaste"><span class="ci">📥</span><span data-i18n="ctxPaste"></span><span class="kb">Ctrl+V</span></button>
+  <button id="ctxSelectAll"><span class="ci">▣</span><span data-i18n="ctxSelectAll"></span><span class="kb">Ctrl+A</span></button>
+  <span class="sep"></span>
+  <button id="ctxFind"><span class="ci">🔍</span><span data-i18n="ctxFind"></span><span class="kb">Ctrl+F</span></button>
+</div>
+
+<div id="veil">
+  <div class="dlg about" id="aboutDlg">
+    <div class="ab-head">
+      <h3><span data-i18n="aboutTitle"></span><span class="vtag" id="aboutVer">__BB_VER__</span></h3>
+      <div class="ab-date"><i data-i18n="aboutDateLabel"></i><span id="aboutDate"></span></div>
+    </div>
+    <div class="ab-blurb" data-i18n="aboutBlurb"></div>
+    <div class="ab-grid" id="aboutGrid"></div>
+    <div class="ab-foot"><b data-i18n="aboutAuthor"></b><span data-i18n="aboutAuthorName"></span></div>
+    <div class="btns"><button id="btnAboutClose" class="primary" data-i18n="close"></button></div>
+  </div>
+</div>
+
+<script>
+(function(){
+  'use strict';
+
+  var vscode = acquireVsCodeApi();
+  /* Where the serial settings come from: globalState injected into the html by the host (the most persistent,
+   survives a VS Code restart) -> the webview's own localStorage (fallback when the host sends none)
+   -> this panel's setState (newest for this session) */
+  var saved = {};
+  try {
+    var hostPrefs = window.__comPrefs;
+    if (hostPrefs && typeof hostPrefs === 'object') {
+      for (var hk in hostPrefs) if (Object.prototype.hasOwnProperty.call(hostPrefs, hk)) saved[hk] = hostPrefs[hk];
+    }
+  } catch (e) { /* Fall back to the defaults when there is nothing */ }
+  try {
+    var localPrefs = JSON.parse(localStorage.getItem('scPrefs') || 'null');
+    if (localPrefs && typeof localPrefs === 'object') {
+      for (var lk in localPrefs) if (Object.prototype.hasOwnProperty.call(localPrefs, lk)) saved[lk] = localPrefs[lk];
+    }
+  } catch (e) { /* Treat broken JSON as absent */ }
+  try {
+    var livePrefs = vscode.getState() || {};
+    for (var pk in livePrefs) if (Object.prototype.hasOwnProperty.call(livePrefs, pk)) saved[pk] = livePrefs[pk];
+  } catch (e) { /* ignore */ }
+  // Default switched to English. Old panels may still pin Chinese in their prefs, so migrate the default once here;
+  // after that the user's own choice is remembered as usual.
+  if (!saved.langPinned) {
+    saved.lang = 'en';
+    saved.langPinned = true;
+    try { vscode.setState(saved); } catch (e) {}
+  }
+  // Timestamps default to off: old prefs mostly stored true, so migrate that once as well
+  if (!saved.tsDefaultOff) {
+    saved.ts = false;
+    saved.tsDefaultOff = true;
+    try { vscode.setState(saved); } catch (e) {}
+  }
+
+  var I18N = {
+    zh: {
+      aboutBtn:'关于', aboutTip:'关于 COM Assistant',
+      stPort:'端口', stCfg:'参数', stRx:'接收', stTx:'发送',
+      capPort:'串口', capUart:'串口参数', capLine:'控制线', capConn:'连接', capView:'显示', capLog:'日志',
+      lblPort:'端口', portTip:'选择串口；插拔后点 ⟳ 重新扫描',
+      reloadTip:'重新扫描串口',
+      lblBaud:'波特率', baudTip:'下拉里是 300 – 3000000 的常用档位；没有的选「自定义」自己填',
+      lblData:'数据位', lblParity:'校验', lblStop:'停止位', lblFlow:'流控',
+      connTip:'打开 / 关闭串口', connect:'连接', disconnect:'断开', connecting:'正在打开…',
+      clearBtn:'清屏', clearTip:'清空日志（同时把收发计数清零）',
+      resetBtn:'复位板子', resetTip:'把 DTR / RTS 拉低 300ms 再放回：多数板子会重新开机，重打一遍开机日志',
+      optHex:'HEX', optTs:'时间', optAuto:'自动滚动', optWrap:'换行',
+      copyBtn:'复制', copyTip:'把整份日志复制到剪贴板',
+      saveBtn:'保存…', saveTip:'把整份日志存成 txt',
+      findBtn:'查找', findTip:'在日志里查找（Ctrl+F）',
+      findPh:'在日志里查找…', findPrevTip:'上一个匹配（Shift+Enter）', findNextTip:'下一个匹配（Enter）',
+      findAllBtn:'全部', findAllTip:'查找全部：在下面的面板里列出每一处匹配，点一行就跳过去',
+      frTitle:'查找结果', frCount:'{n} 处匹配', frNone:'没有匹配', frMore:'只显示前 {n} 处', frCloseTip:'关闭结果面板',
+      frStale:'第 {n} 行已经滚出日志缓冲区，只在下面的结果里保留', resSplitTip:'上下拖动调整结果面板高度，双击恢复默认',
+      histShown:'历史回看 · 第 {a}–{b} 行', histBack:'回到实时',
+      optNums:'行号', optNumsTip:'在日志左侧显示行号（只是显示，不会写进复制/保存的文本）',
+      findCloseTip:'关闭查找（Esc）',
+      ctxCut:'剪切', ctxCopy:'复制', ctxPaste:'粘贴', ctxSelectAll:'全选', ctxFind:'查找…',
+      copyFirst:'先选中要复制的内容', cutDone:'已剪切', pasteFail:'读不到剪贴板内容',
+      lblSendAs:'发送', sendPh:'输入命令，回车发送（↑↓ 翻历史）',
+      lblEol:'行尾', lblRepeat:'重发 ms', repeatTip:'>0 时按毫秒间隔重复发送，0 = 只发一次',
+      sendBtn:'发送', stopBtn:'停止',
+      disconnected:'未连接', connected:'已连接',
+      noPorts:'没有检测到串口 — 插上设备后点 ⟳',
+      pickPort:'（先选一个串口）',
+      scanning:'正在扫描串口…', found:'找到 {n} 个串口',
+      opening:'正在打开 {p} @ {b} …', openFail:'打开失败：{e}',
+      opened:'已连接 {p} @ {f}', closedByUser:'已断开（手动）', closedByHost:'串口已关闭：{r}',
+      closedReplaced:'已断开（被新的连接替换）', closedPanel:'面板已关闭，端口已释放', closedExit:'串口进程已退出（code {c}）',
+      noDataHint:'还没收到字节 — 端口是开着的、在监听。板子两轮开机之间通常很安静，点「复位板子」让它重跑一遍开机日志',
+      fastHint:'数据量很大 — 关掉「时间戳」和「自动滚动」会流畅很多',
+      dropHint:'显示跟不上，已跳过 {n}：只保留最新内容（关掉时间戳 / 自动滚动能追回来）',
+      resetSent:'已发复位脉冲（DTR/RTS 拉低 300ms）— 板子应该会重新开机',
+      dtrTip:'DTR（Data Terminal Ready，数据终端就绪）：本端告诉设备「我准备好了」。9 针串口上是一根实实在在的线，很多开发板把它接到复位脚或 BOOT 脚上，所以拉高/拉低常常等于在按复位键。勾上 = 拉高。',
+      rtsTip:'RTS（Request To Send，请求发送）：本端告诉设备「我要发数据了」，硬件流控里用来握手。和 DTR 一样，板子也经常拿它当复位/BOOT 脚。勾上 = 拉高。',
+      sendFail:'发送失败：{e}', needConn:'串口没打开，先点「连接」',
+      emptySend:'没有可发送的内容', hexBad:'HEX 都输不对：只允许 0-9 A-F，可用空格分隔',
+      cleared:'日志已清空', copied:'日志已复制', saved:'日志已保存：{p}', saveFail:'保存失败',
+      repeatOn:'每 {n} ms 重发中', repeatOff:'已停止重发',
+      aboutTitle:'COM Assistant', close:'关闭',
+      aboutBlurb:'给 BIOS 调试用的串口（UART）终端：收发原始字节、HEX 视图、时间戳、按行尾发送、定时重发。',
+      aboutDateLabel:'日期', aboutAuthor:'作者',
+      aboutAuthorName:'Suyu Diao, Firmware Engineer In LCFC',
+      aboutT1:'原始字节收发', aboutD1:'Text 与 HEX 两种输入都按字节发出去，收到的字节不经编码转换，二进制也不会被改坏。',
+      aboutT2:'HEX 视图', aboutD2:'偏移 + 16 列 + ASCII 边栏；满 16 字节立刻出一行，零头等 150ms 冲刷，慢速设备也看得见。',
+      aboutT3:'行尾与定时重发', aboutD3:'CRLF / LF / CR / None 四种行尾，可按毫秒间隔重复发送，↑↓ 翻历史。',
+      aboutT4:'跑在扩展进程里', aboutD4:'串口由 PowerShell 的 System.IO.Ports 托管，webview 只负责显示，关掉面板即释放端口。',
+      greeting:'就绪 — 选好串口参数后点「连接」', hexView:'HEX 视图', textView:'文本视图',
+      notDetected:'（未检测到）', baudCustom:'自定义…', baudEmpty:'请填一个波特率，或从下拉里选一个',
+      fmt:'{b} {d}{p}{s}', parityShort:{None:'N',Even:'E',Odd:'O',Mark:'M',Space:'S'}
+    },
+    en: {
+      aboutBtn:'About', aboutTip:'About COM Assistant',
+      stPort:'Port', stCfg:'Config', stRx:'RX', stTx:'TX',
+      capPort:'Port', capUart:'UART', capLine:'Lines', capConn:'Connect', capView:'View', capLog:'Log',
+      lblPort:'Port', portTip:'Pick a serial port; hit ⟳ after plugging a device in',
+      reloadTip:'Rescan serial ports',
+      lblBaud:'Baud', baudTip:'Common rates from 300 to 3000000 — pick Custom… for anything else',
+      lblData:'Data', lblParity:'Parity', lblStop:'Stop', lblFlow:'Flow',
+      connTip:'Open / close the port', connect:'Connect', disconnect:'Disconnect', connecting:'Opening…',
+      clearBtn:'Clear', clearTip:'Clear the log (and reset the RX / TX counters)',
+      resetBtn:'Reset board', resetTip:'Pull DTR / RTS low for 300 ms and back — most boards reboot and reprint their boot log',
+      optHex:'HEX', optTs:'Time', optAuto:'Auto-scroll', optWrap:'Wrap',
+      copyBtn:'Copy', copyTip:'Copy the whole log to the clipboard',
+      saveBtn:'Save…', saveTip:'Save the whole log as a txt file',
+      findBtn:'Find', findTip:'Find in the log (Ctrl+F)',
+      findPh:'Find in log…', findPrevTip:'Previous match (Shift+Enter)', findNextTip:'Next match (Enter)',
+      findAllBtn:'All', findAllTip:'Find all: list every match in the panel below, click a row to jump there',
+      frTitle:'Results', frCount:'{n} matches', frNone:'No matches', frMore:'Showing the first {n}', frCloseTip:'Close the results panel',
+      frStale:'Line {n} has scrolled out of the log buffer — it is only kept in the results below', resSplitTip:'Drag up / down to resize the results panel, double-click to reset',
+      histShown:'History · lines {a}–{b}', histBack:'Back to live',
+      optNums:'Line #', optNumsTip:'Show line numbers on the left of the log (display only — never written into copied/saved text)',
+      findCloseTip:'Close find (Esc)',
+      ctxCut:'Cut', ctxCopy:'Copy', ctxPaste:'Paste', ctxSelectAll:'Select all', ctxFind:'Find…',
+      copyFirst:'Select something to copy first', cutDone:'Cut', pasteFail:'Cannot read the clipboard',
+      lblSendAs:'Send', sendPh:'Type a command, press Enter (↑↓ for history)',
+      lblEol:'EOL', lblRepeat:'Repeat ms', repeatTip:'>0 repeats the send at that interval; 0 = send once',
+      sendBtn:'Send', stopBtn:'Stop',
+      disconnected:'Disconnected', connected:'Connected',
+      noPorts:'No serial port found — plug a device in, then hit ⟳',
+      pickPort:'(pick a port first)',
+      scanning:'Scanning serial ports…', found:'{n} port(s) found',
+      opening:'Opening {p} @ {b} …', openFail:'Cannot open: {e}',
+      opened:'Connected to {p} @ {f}', closedByUser:'Disconnected', closedByHost:'Port closed: {r}',
+      closedReplaced:'Disconnected (replaced by a new session)', closedPanel:'Panel closed — port released', closedExit:'Serial process exited (code {c})',
+      noDataHint:'Nothing yet — the port is open and listening. Boards are usually silent between boots; hit Reset to replay the boot log',
+      fastHint:'Heavy stream — turn off Timestamps and Auto-scroll for a much smoother view',
+      dropHint:'Display cannot keep up — skipped {n}; showing the newest data only (turn off Timestamps / Auto-scroll to catch up)',
+      resetSent:'Reset pulse sent (DTR/RTS low for 300 ms) — the board should reboot now',
+      dtrTip:'DTR (Data Terminal Ready): the PC tells the device "I am ready". It is a real pin on a 9-pin port, and many boards wire it to RESET or BOOT — so toggling it feels just like pressing the reset button. Checked = driven high.',
+      rtsTip:'RTS (Request To Send): the PC tells the device "I want to transmit" — the handshake line for hardware flow control. Like DTR, boards often reuse it for RESET / BOOT. Checked = driven high.',
+      sendFail:'Send failed: {e}', needConn:'The port is not open — hit Connect first',
+      emptySend:'Nothing to send', hexBad:'Bad HEX input: only 0-9 A-F, spaces allowed',
+      cleared:'Log cleared', copied:'Log copied', saved:'Log saved: {p}', saveFail:'Save failed',
+      repeatOn:'Repeating every {n} ms', repeatOff:'Repeat stopped',
+      aboutTitle:'COM Assistant', close:'Close',
+      aboutBlurb:'A UART terminal for BIOS debugging: raw bytes, HEX view, timestamps, per-line endings and timed repeats.',
+      aboutDateLabel:'DATE', aboutAuthor:'AUTHOR',
+      aboutAuthorName:'Suyu Diao, Firmware Engineer In LCFC',
+      aboutT1:'Raw byte I/O', aboutD1:'Text and HEX input both go out as bytes; what comes back is never re-encoded, so binary data survives.',
+      aboutT2:'HEX view', aboutD2:'Offset, 16 columns and an ASCII gutter. A full 16 bytes prints at once; the tail flushes after 150 ms.',
+      aboutT3:'Line endings & repeats', aboutD3:'CRLF / LF / CR / None, timed repeat in milliseconds, up/down for history.',
+      aboutT4:'In the extension process', aboutD4:'The port is owned by System.IO.Ports via PowerShell; the webview only draws. Closing the panel frees the port.',
+      greeting:'Ready — pick a port and parameters, then hit Connect', hexView:'HEX view', textView:'Text view',
+      notDetected:' (not detected)', baudCustom:'Custom…', baudEmpty:'Type a baud rate, or pick one from the list',
+      fmt:'{b} {d}{p}{s}', parityShort:{None:'N',Even:'E',Odd:'O',Mark:'M',Space:'S'}
+    }
+  };
+
+  var lang = saved.lang === 'zh' ? 'zh' : 'en';
+  var t = function(k){ return (I18N[lang][k] !== undefined ? I18N[lang][k] : k); };
+  function esc(s){
+    return String(s).replace(/[&<>"]/g, function(c){
+      return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c];
+    });
+  }
+  function fill(str, map){
+    return String(str).replace(/\{(\w+)\}/g, function(_, k){ return map[k] !== undefined ? map[k] : ''; });
+  }
+
+  var $ = function(id){ return document.getElementById(id); };
+  var el = {
+    port:$('port'), btnReload:$('btnReload'), baud:$('baud'), baudFree:$('baudFree'), dataBits:$('dataBits'), parity:$('parity'),
+    stopBits:$('stopBits'), flow:$('flow'), dtr:$('dtr'), rts:$('rts'), btnReset:$('btnReset'),
+    btnConn:$('btnConn'), btnClear:$('btnClear'),
+    optHex:$('optHex'), optTs:$('optTs'), optAuto:$('optAuto'), optWrap:$('optWrap'), optNums:$('optNums'),
+    findAll:$('findAll'), findRes:$('findRes'), resSplit:$('resSplit'), frList:$('frList'), frSum:$('frSum'), frClose:$('frClose'),
+    btnCopy:$('btnCopy'), btnSave:$('btnSave'), btnFind:$('btnFind'),
+    findBar:$('findBar'), findInput:$('findInput'), findCount:$('findCount'),
+    log:$('log'), logWrap:$('logWrap'), sendEnc:$('sendEnc'), sendInput:$('sendInput'), eol:$('eol'), repeatMs:$('repeatMs'), btnSend:$('btnSend'),
+    statusPort:$('statusPort'), statusCfg:$('statusCfg'), statusRx:$('statusRx'), statusTx:$('statusTx'), statusMsg:$('statusMsg'),
+    pill:$('connPill'), connText:$('connText'), btnLang:$('btnLang'), btnAbout:$('btnAbout'), veil:$('veil')
+  };
+
+  var state = {
+    ports: [], connected: false, connecting: false,
+    rxBytes: 0, txBytes: 0, hexOffset: 0,
+    line: null,            // the line currently being written (text mode)
+    lineCount: 0,          // number of log rows (tracked by hand, never by counting childNodes)
+    lineSeq: 0,            // row-number sequence (monotonic; trimming rows never renumbers the rest)
+    /* Full archive: the text of every line captured in this session. Trimming the log DOM
+       only affects the display. "Find all" searches this, so line 1 stays reachable. */
+    hist: [], histBase: 0, histChars: 0,
+    histView: null,        // history window { from, to }: the log shows a past slice, not the live tail
+    portName: '—',         // name of the connected port (status bar and "connected" message)
+    resH: 0,               // height of the "find all" panel (set by dragging the splitter; 0 = never dragged)
+    numDigits: 0,          // current digit count of row numbers (write --numw only when it changes, not every frame)
+    frag: null,            // new nodes accumulated for this frame
+    hexTimer: null,         // flush timer for the HEX-mode remainder
+    pending: '',           // partial line still waiting for a newline
+    hexRest: [],           // HEX bytes left over from an incomplete 16-byte row
+    rxQueue: [],           // buffered receive chunks, all painted at once on flush
+    rxQueued: 0,
+    rxWin: 0, rxWinAt: 0,     // rate measurement window
+    fastHinted: false,
+    dropHinted: false,      // the "display cannot keep up" hint fires only once
+    dropped: 0,             // bytes dropped because rendering could not keep up
+    flushCost: 0,           // moving average of the last frame's render cost (drives the adaptive interval)
+    counterAt: 0,           // when the counter bar was last refreshed
+    pinBottom: true,        // is the user still at the bottom (do not steal the scrollbar while they read history)
+    scrollRaf: 0,
+    rxTimer: null,
+    decoder: new TextDecoder('utf-8'),
+    history: [], histIdx: -1,
+    repeatTimer: null,
+    lastPayload: null
+  };
+
+  /* ---------------- small helpers ---------------- */
+  function hhmmss(){
+    var d = new Date();
+    var p2 = function(n){ return (n < 10 ? '0' : '') + n; };
+    var p3 = function(n){ return (n < 100 ? (n < 10 ? '00' : '0') : '') + n; };
+    return p2(d.getHours()) + ':' + p2(d.getMinutes()) + ':' + p2(d.getSeconds()) + '.' + p3(d.getMilliseconds());
+  }
+  function fmtBytes(n){
+    if (n < 1024) return n + ' B';
+    if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';
+    return (n / 1048576).toFixed(2) + ' MB';
+  }
+  function fmtCfg(){
+    var speed = baudVal();
+    var p = (I18N[lang].parityShort[el.parity.value] || 'N');
+    var stop = el.stopBits.value === 'One' ? '1' : (el.stopBits.value === 'Two' ? '2' : '1.5');
+    return speed + ' ' + el.dataBits.value + p + stop;
+  }
+  function base64ToBytes(b64){
+    var bin = atob(b64);
+    var out = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i) & 255;
+    return out;
+  }
+  function toHex(b){ return (b < 16 ? '0' : '') + b.toString(16).toUpperCase(); }
+  function textToBytes(s){ return new TextEncoder().encode(s); }
+  function bytesToBase64(bytes){
+    var s = '', i;
+    for (i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+    return btoa(s);
+  }
+  function parseHex(s){
+    var v = String(s || '').replace(/0x/gi, '').replace(/[\s,;:]/g, '');
+    if (!/^[0-9a-fA-F]*$/.test(v)) return null;
+    if (v.length % 2 === 1) v = '0' + v;
+    var out = new Uint8Array(v.length / 2);
+    for (var i = 0; i < out.length; i++) out[i] = parseInt(v.substr(i * 2, 2), 16);
+    return out;
+  }
+
+  function toast(msg, kind){
+    el.statusMsg.textContent = msg || '';
+    el.statusMsg.className = kind || '';
+    clearTimeout(toast._t);
+    toast._t = setTimeout(function(){ el.statusMsg.textContent = ''; el.statusMsg.className = ''; }, 5000);
+  }
+
+  /* ---------------- log ---------------- */
+  // A fast port (3 Mbps) delivers hundreds of chunks per second, and touching the DOM per chunk kills the UI:
+  // building a row and committing it are therefore split - new nodes always go into state.frag first
+  // and are appended once per frame, cutting reflows from hundreds per second to a few dozen.
+  var MAX_LINES = 1200;
+  function frag(){
+    if (!state.frag) state.frag = document.createDocumentFragment();
+    return state.frag;
+  }
+  function stampOn(){
+    return el.optTs.checked;
+  }
+  // A real space follows the timestamp: CSS margin alone lets them touch at some zoom levels
+  function stampNode(tsText){
+    var f = document.createDocumentFragment();
+    var ts = document.createElement('span');
+    ts.className = 'ts';
+    ts.textContent = tsText || hhmmss();
+    f.appendChild(ts);
+    f.appendChild(document.createTextNode(' '));
+    return f;
+  }
+  function newLine(cls, tsText){
+    var d = document.createElement('div');
+    d.className = 'ln' + (cls ? ' ' + cls : '');
+    d.setAttribute('data-n', String(++state.lineSeq));   // row number lives on an attribute only, never in the text
+    if (stampOn()) d.appendChild(stampNode(tsText));
+    frag().appendChild(d);
+    state.lineCount++;
+    state.line = d;
+    return d;
+  }
+  function trimLog(){
+    // childNodes.length is a cached count (no layout), so it beats our own bookkeeping here:
+    // one missed increment and trimming never happens - the classic "gets slower the longer it runs"
+    var over = el.log.childNodes.length - MAX_LINES;
+    if (over <= 0) return;
+    var r = document.createRange();
+    r.setStart(el.log, 0);
+    r.setEnd(el.log, over);
+    r.deleteContents();
+    state.lineCount = el.log.childNodes.length;
+    if (state.line && !state.line.parentNode) state.line = null;
+  }
+  // Follow policy: auto-scroll only while the user sits at the bottom. Intent comes from wheel/keyboard,
+  // so scrollHeight is normally never read - reading it forces a synchronous layout.
+  el.log.addEventListener('wheel', function(e){
+    if (e.deltaY < 0) state.pinBottom = false;      // scrolling up means reading history: release the scrollbar
+  }, { passive: true });
+  el.log.addEventListener('keydown', function(e){
+    if (e.key === 'PageUp' || e.key === 'ArrowUp' || e.key === 'Home') state.pinBottom = false;
+  });
+  // Only check for a return to the bottom once detached: plain following costs no layout at all
+  el.log.addEventListener('scroll', function(){
+    if (state.pinBottom || state.scrollRaf) return;
+    state.scrollRaf = requestAnimationFrame(function(){
+      state.scrollRaf = 0;
+      if (!state.pinBottom) {
+        state.pinBottom = (el.log.scrollTop + el.log.clientHeight) >= (el.log.scrollHeight - 16);
+      }
+    });
+  }, { passive: true });
+
+  function scrollEnd(){
+    if (!el.optAuto.checked || !state.pinBottom) return;
+    // Do not read scrollHeight: hand it an oversized value and let the browser clamp to the bottom
+    el.log.scrollTop = 1e7;
+  }
+  // Archive cap in characters (~40 chars per line, so roughly 400k lines). Oldest entries go first,
+  // and histBase counts what was dropped so row numbers never shift.
+  var HIST_MAX = 16 * 1024 * 1024;
+  function histPush(t){
+    state.hist.push(t);
+    state.histChars += t.length;
+    if (state.histChars > HIST_MAX) {
+      var cut = 0, drop = 0, n = Math.max(500, state.hist.length >> 4);
+      while (cut < n) { drop += state.hist[cut].length; cut++; }
+      state.hist.splice(0, cut);
+      state.histBase += cut;
+      state.histChars -= drop;
+      find.allSig = '';                   // archive changed, so the result panel must be repainted
+    }
+  }
+  // Commit once per frame: append the whole fragment, trim, scroll to bottom - one reflow each
+  function commitLog(){
+    if (state.frag) {
+      var fresh = [], i, kids = state.frag.childNodes;
+      for (i = 0; i < kids.length; i++) fresh.push(kids[i]);
+      /* In the history window only the archive is updated, nothing goes on screen: new data still
+         lands in state.hist and the last MAX_LINES rows are rebuilt when returning to live. */
+      if (!state.histView) el.log.appendChild(state.frag);
+      state.frag = null;
+      for (i = 0; i < fresh.length; i++) histPush(fresh[i].textContent || '');
+    }
+    if (state.histView) { if (state.line && !state.line.parentNode) state.line = null; return; }
+    // When the digit count changes (999 -> 1000) widen the gutter, so numbers stay right-aligned and the text does not move
+    var dg = String(state.lineSeq).length;
+    if (dg !== state.numDigits) {
+      state.numDigits = dg;
+      document.documentElement.style.setProperty('--numw', Math.max(2, dg) + 'ch');
+    }
+    // The last line may still be growing this frame (data arrives in fragments): keep its archive copy in sync
+    if (state.line && state.line.parentNode === el.log && state.hist.length) {
+      var t = state.line.textContent || '';
+      var last = state.hist.length - 1;
+      state.histChars += t.length - state.hist[last].length;
+      state.hist[last] = t;
+    }
+    trimLog();
+    scrollEnd();
+    if (find.open && find.q) scheduleFind();   // new data arrived: highlights must be recomputed (debounced)
+  }
+  function sysLine(msg, kind, key, vars){
+    var d = document.createElement('div');
+    d.className = 'ln sys' + (kind ? ' ' + kind : '');
+    d.setAttribute('data-n', String(++state.lineSeq));
+    if (stampOn()) d.appendChild(stampNode());
+    var txt = document.createElement('span');
+    txt.className = 'txt';
+    txt.textContent = msg;
+    d.appendChild(txt);
+    // Record which i18n key produced this row so a language switch can repaint it in place, otherwise stale rows stay on screen
+    if (key) {
+      d.setAttribute('data-k', key);
+      if (vars) d.setAttribute('data-v', JSON.stringify(vars));
+    }
+    frag().appendChild(d);
+    state.lineCount++;
+    state.line = null;
+    commitLog();
+  }
+  function appendText(str, tsText){
+    if (!str) return;
+    var parts = str.split('\n');
+    for (var i = 0; i < parts.length; i++) {
+      if (i > 0) state.line = null;
+      var seg = parts[i];
+      if (!seg) continue;
+      if (!state.line) newLine('', tsText);
+      // Merge consecutive fragments of a line into one text node: thousands of text nodes are just as heavy
+      var last = state.line.lastChild;
+      if (last && last.nodeType === 3) last.nodeValue += seg;
+      else state.line.appendChild(document.createTextNode(seg));
+    }
+    if (str.charAt(str.length - 1) === '\n') state.line = null;
+  }
+  function hexRow(chunk, off){
+    var hex = [], gut = '';
+    for (var i = 0; i < chunk.length; i++) {
+      hex.push(toHex(chunk[i]));
+      var c = chunk[i];
+      gut += (c >= 32 && c < 127) ? String.fromCharCode(c) : '.';
+    }
+    var d = document.createElement('div');
+    d.className = 'ln hexln';
+    d.setAttribute('data-n', String(++state.lineSeq));
+    var o = document.createElement('span');
+    o.className = 'off';
+    o.textContent = ('0000000' + off.toString(16).toUpperCase()).slice(-8);
+    var g = document.createElement('span');
+    g.className = 'gut';
+    g.textContent = '|' + gut + '|';
+    d.appendChild(o);
+    d.appendChild(document.createTextNode(hex.join(' ')));
+    d.appendChild(g);
+    frag().appendChild(d);
+    state.lineCount++;
+  }
+  // Serial data trickles in: emit a row as soon as 16 bytes are available, and flush a shorter
+  // remainder after 150 ms without new data - otherwise a slow device stays invisible for ages.
+  function flushHexRest(){
+    clearTimeout(state.hexTimer);
+    state.hexTimer = null;
+    if (!state.hexRest.length) return;
+    hexRow(state.hexRest, state.hexOffset);
+    state.hexOffset += state.hexRest.length;
+    state.hexRest = [];
+    commitLog();
+  }
+  function appendHex(bytes){
+    if (!bytes.length) return;
+    var all = state.hexRest.concat(Array.prototype.slice.call(bytes));
+    var rows = Math.floor(all.length / 16);
+    // At 3 Mbps that is 20k+ rows per second: paint only the tail and account for the rest without drawing
+    var skip = rows > 800 ? rows - 800 : 0;
+    state.hexOffset += skip * 16;
+    for (var r = skip; r < rows; r++) hexRow(all.slice(r * 16, r * 16 + 16), state.hexOffset + r * 16);
+    state.hexOffset += (rows - skip) * 16;
+    state.hexRest = all.slice(rows * 16);
+    clearTimeout(state.hexTimer);
+    state.hexTimer = state.hexRest.length ? setTimeout(flushHexRest, 150) : null;
+    commitLog();
+  }
+  function serializeLog(){
+    // Use the whole archive: the log keeps only the last 1200 rows, but copy/save must cover everything
+    var src = state.hist, out = [], i;
+    if (!src.length) {                       // nothing archived yet (very early): fall back to reading the DOM
+      for (i = 0; i < el.log.childNodes.length; i++) out.push(el.log.childNodes[i].textContent || '');
+      src = out; out = [];
+    }
+    for (i = 0; i < src.length; i++) out.push((src[i] || '').replace(/\u00a0/g, ' '));
+    return out.join('\n') + '\n';
+  }
+
+  /* ---------------- connection state ---------------- */
+  function setConnected(on, info){
+    state.connected = !!on;
+    state.connecting = false;
+    state.rxWin = 0; state.rxWinAt = 0;
+    if (!on) state.fastHinted = false;
+    el.pill.classList.toggle('on', state.connected);
+    el.connText.textContent = state.connected ? t('connected') : t('disconnected');
+    el.btnConn.textContent = state.connected ? t('disconnect') : t('connect');
+    el.btnConn.classList.toggle('primary', !state.connected);
+    el.btnConn.classList.toggle('danger', state.connected);
+    ['port','baud','baudFree','dataBits','parity','stopBits','flow'].forEach(function(k){ el[k].disabled = state.connected; });
+    el.btnReload.disabled = state.connected;
+    if (state.connected && info) {
+      state.portName = info.port;
+      /* The baud rate already lives in the Config field — this one is the port alone */
+      el.statusPort.textContent = info.port;
+      el.statusCfg.textContent = fmtCfg();
+    } else {
+      state.portName = '—';
+      el.statusPort.textContent = '—';
+    }
+    if (!state.connected) stopRepeat(true);
+  }
+  /* ---------------- receive: buffer first, paint once per frame ---------------- */
+  // 3 Mbps of continuous data is hundreds of chunks per second. Painting each one means hundreds of
+  // reflows per second and drags the whole of VS Code down. Buffering them and decoding + committing
+  // every 40 ms costs a little freshness but takes CPU from "one core pinned" to "barely visible".
+  var RX_FLUSH_MS = 40;
+  var MAX_QUEUE = 1024 * 1024;       // buffer at most 1 MB of unpainted data, then drop the oldest
+  var MAX_RENDER = 192 * 1024;       // paint at most 192 KB per frame, keep only the newest part of the rest
+  var LINES_PER_FLUSH = 500;         // max rows created per frame, so long-line bursts cannot blow up one frame
+  function dropHead(q, want){
+    var dropped = 0;
+    while (q.length > 1 && dropped < want) dropped += q.shift().length;
+    state.rxQueued -= dropped;
+    state.dropped += dropped;
+    return dropped;
+  }
+  function queueRx(bytes){
+    if (!bytes || !bytes.length) return;
+    state.rxBytes += bytes.length;
+    var q = state.rxQueue;
+    q.push(bytes);
+    state.rxQueued += bytes.length;
+    // A renderer that falls behind must not let the queue grow forever: the bigger it gets, the more each frame paints
+    if (state.rxQueued > MAX_QUEUE) dropHead(q, state.rxQueued - MAX_QUEUE / 2);
+    if (state.rxTimer) {
+      // With a big backlog stop waiting for the timer and paint now, or the screen lags by seconds
+      if (state.rxQueued > 262144) { clearTimeout(state.rxTimer); state.rxTimer = null; flushRx(); }
+      return;
+    }
+    // The slower the last frame, the later the next one starts: fewer updates beats a saturated main thread
+    var delay = RX_FLUSH_MS;
+    if (state.flushCost > 6) delay = Math.max(delay, Math.min(250, state.flushCost * 5));
+    if (state.rxQueued > 16384) delay = Math.max(delay, 100);
+    state.rxTimer = setTimeout(flushRx, delay);
+  }
+  function flushRx(){
+    state.rxTimer = null;
+    var q = state.rxQueue;
+    if (!q.length) return;
+    var t0 = (window.performance && performance.now) ? performance.now() : Date.now();
+    var total = state.rxQueued;
+    state.rxQueue = [];
+    state.rxQueued = 0;
+    var all = new Uint8Array(total), at = 0;
+    for (var i = 0; i < q.length; i++) { all.set(q[i], at); at += q[i].length; }
+    if (total > MAX_RENDER) {
+      // Paint only the newest slice: the log is for seeing what was said last, not for archiving
+      var keep = all.subarray(total - MAX_RENDER);
+      var nl = keep.indexOf(10);
+      if (nl >= 0 && nl < 512) keep = keep.subarray(nl + 1);   // start on a whole line, never paint half of one
+      state.dropped += total - keep.length;
+      all = keep;
+    }
+    if (state.dropped && !state.dropHinted) noteDropped();
+    var ts = stampOn() ? hhmmss() : '';
+    if (el.optHex.checked) appendHex(all);
+    else {
+      var text = state.decoder.decode(all, { stream: true }).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+      // At most 500 rows per frame: at 3 Mbps 100 ms of data is thousands of rows, and DOM building alone stalls the frame
+      var capped = capLines(text, LINES_PER_FLUSH);
+      if (capped.length !== text.length) state.dropped += text.length - capped.length;
+      appendText(capped, ts);
+    }
+    commitLog();
+    updateCounters();
+    speedWatch(total);
+    var t1 = (window.performance && performance.now) ? performance.now() : Date.now();
+    // Moving average: how long this frame took decides when the next one may start
+    state.flushCost = state.flushCost * 0.6 + (t1 - t0) * 0.4;
+  }
+  function noteDropped(){
+    state.dropHinted = true;
+    var n = fmtBytes(state.dropped);
+    sysLine(fill(t('dropHint'), { n: n }), 'warn', 'dropHint', { n: n });
+  }
+  // Count newlines backwards from the end and cut everything older than max, capping the rows a single frame builds
+  function capLines(text, max){
+    var n = 0, i = text.length;
+    while (i > 0) {
+      i = text.lastIndexOf('\n', i - 1);
+      if (i < 0) break;
+      if (++n > max) return text.slice(i + 1);
+    }
+    return text;
+  }
+  // At 3 Mbps even "a few dozen reflows per second over a thousand rows" is enough to bog the UI down.
+  // On sustained high rates, hint once: turning off timestamps and auto-scroll helps noticeably.
+  function speedWatch(n){
+    var now = Date.now();
+    if (!state.rxWinAt) state.rxWinAt = now;
+    state.rxWin += n;
+    var span = now - state.rxWinAt;
+    if (span < 3000) return;
+    var rate = state.rxWin * 1000 / span;
+    state.rxWin = 0; state.rxWinAt = now;
+    if (rate > 150000 && !state.fastHinted && (stampOn() || el.optAuto.checked)) {
+      state.fastHinted = true;
+      sysLine(t('fastHint'), 'warn', 'fastHint');
+    }
+  }
+
+  function updateCounters(force){
+    // The counter bar, like the body, does not need a DOM write on every refresh
+    var now = Date.now();
+    if (!force && now - state.counterAt < 200) return;
+    state.counterAt = now;
+    el.statusRx.textContent = fmtBytes(state.rxBytes);
+    el.statusTx.textContent = fmtBytes(state.txBytes);
+  }
+  function prefsNow(){
+    return {
+      lang: lang, langPinned: true, tsDefaultOff: true,
+      // el.port.value is empty until the port list arrives: do not overwrite the remembered port with it
+      port: el.port.value || saved.port || '', baud: baudVal(), dataBits: el.dataBits.value, parity: el.parity.value,
+      stopBits: el.stopBits.value, flow: el.flow.value,
+      dtr: el.dtr.checked, rts: el.rts.checked,
+      hex: el.optHex.checked, ts: el.optTs.checked, auto: el.optAuto.checked, wrap: el.optWrap.checked, nums: el.optNums.checked,
+      sendEnc: el.sendEnc.value, eol: el.eol.value, repeatMs: el.repeatMs.value,
+      resH: state.resH
+    };
+  }
+  function savePrefs(){
+    var prefs = prefsNow();
+    try { vscode.setState(prefs); } catch (e) {}
+    // Store both ways: host globalState survives restarts, localStorage covers the case where the host is not wired up yet
+    try { vscode.postMessage({ type: 'savePrefs', prefs: prefs }); } catch (e) {}
+    try { localStorage.setItem('scPrefs', JSON.stringify(prefs)); } catch (e) {}
+  }
+
+  /* ---------------- control defaults ---------------- */
+  var BAUD_RATES = [300, 600, 1200, 2400, 4800, 9600, 14400, 19200, 28800, 38400,
+    57600, 76800, 115200, 128000, 230400, 256000, 460800, 500000, 576000,
+    921600, 1000000, 1152000, 1500000, 2000000, 2500000, 3000000];
+
+  /* ---------------- baud rate: dropdown + custom ---------------- */
+  function baudVal(){
+    return el.baud.value === 'custom' ? String(el.baudFree.value || '').trim() : String(el.baud.value || '').trim();
+  }
+  function setBaud(v){
+    var want = String(v == null ? '' : v).trim() || '115200';
+    var known = Array.prototype.some.call(el.baud.options, function(o){ return o.value === want; });
+    el.baud.value = known ? want : 'custom';
+    el.baudFree.value = known ? '' : want;
+    el.baudFree.classList.toggle('show', !known);
+  }
+
+  function buildSelects(){
+    var opts = {
+      dataBits: [8, 7, 6, 5],
+      parity: ['None','Even','Odd','Mark','Space'],
+      stopBits: [['One','1'],['OnePointFive','1.5'],['Two','2']],
+      flow: [['None','None'],['RTS/CTS','RTS/CTS'],['XON/XOFF','XON/XOFF']]
+    };
+    opts.dataBits.forEach(function(v){ el.dataBits.appendChild(new Option(String(v), String(v))); });
+    opts.parity.forEach(function(v){ el.parity.appendChild(new Option(v, v)); });
+    opts.stopBits.forEach(function(p){ el.stopBits.appendChild(new Option(p[1], p[0])); });
+    opts.flow.forEach(function(p){ el.flow.appendChild(new Option(p[1], p[0])); });
+    // List every common baud rate from 300 to 3000000 (in numeric order), with "custom" as the last entry
+    BAUD_RATES.forEach(function(b){ el.baud.appendChild(new Option(String(b), String(b))); });
+    el.baud.appendChild(new Option(t('baudCustom'), 'custom'));
+  }
+  function applyPrefs(){
+    setBaud(saved.baud || '115200');
+    if (saved.dataBits) el.dataBits.value = saved.dataBits;
+    if (saved.parity) el.parity.value = saved.parity;
+    if (saved.stopBits) el.stopBits.value = saved.stopBits;
+    if (saved.flow) el.flow.value = saved.flow;
+    el.dtr.checked = saved.dtr !== false;
+    el.rts.checked = saved.rts !== false;
+    el.optHex.checked = saved.hex === true;
+    el.optTs.checked = saved.ts === true;
+    el.optAuto.checked = saved.auto !== false;
+    el.optWrap.checked = saved.wrap === true;
+    el.optNums.checked = saved.nums !== false;      // on by default
+    el.sendEnc.value = saved.sendEnc === 'hex' ? 'hex' : 'text';
+    if (saved.eol) el.eol.value = saved.eol;
+    if (saved.repeatMs) el.repeatMs.value = saved.repeatMs;
+    el.log.classList.toggle('wrap', el.optWrap.checked);
+    el.log.classList.toggle('nums', el.optNums.checked);
+    state.resH = Math.max(0, parseInt(saved.resH, 10) || 0);
+    el.statusCfg.textContent = fmtCfg();
+  }
+
+  /* ---------------- port list ---------------- */
+  // The device name usually already contains (COM3); prefixing the port again would show COM3 twice
+  function portLabel(p){
+    var desc = p.desc || '';
+    if (!desc || desc === 'Serial port' || desc === p.path) return p.path;
+    if (desc.toUpperCase().indexOf(p.path.toUpperCase()) >= 0) return desc;
+    return p.path + '  —  ' + desc;
+  }
+  function renderPorts(ports, keepSilent){
+    state.ports = ports || [];
+    var want = el.port.value || saved.port || '';
+    el.port.innerHTML = '';
+    if (!state.ports.length) {
+      el.port.appendChild(new Option(t('noPorts'), ''));
+    } else {
+      state.ports.forEach(function(p){
+        el.port.appendChild(new Option(portLabel(p), p.path));
+      });
+      if (want && !state.ports.some(function(p){ return p.path === want; })) {
+        el.port.appendChild(new Option(want + t('notDetected'), want));
+      }
+      var hit = state.ports.filter(function(p){ return p.path === want; })[0];
+      el.port.value = hit ? hit.path : state.ports[0].path;
+    }
+    syncPortTitle();
+    if (!keepSilent) toast(fill(t('found'), { n: state.ports.length }), state.ports.length ? 'ok' : 'err');
+  }
+  // Device names often exceed the box width, so put a title on the selected option to show it in full on hover
+  function syncPortTitle(){
+    var o = el.port.options[el.port.selectedIndex];
+    el.port.title = o ? o.text : '';
+  }
+  function scan(keepSilent){
+    if (!keepSilent) toast(t('scanning'));
+    vscode.postMessage({ type: 'listPorts' });
+  }
+
+  /* ---------------- connect ---------------- */
+  function config(){
+    return {
+      port: el.port.value,
+      baud: Number(baudVal()),
+      dataBits: Number(el.dataBits.value),
+      parity: el.parity.value,
+      stopBits: el.stopBits.value,
+      flow: el.flow.value,
+      dtr: el.dtr.checked,
+      rts: el.rts.checked
+    };
+  }
+  function connect(){
+    var cfg = config();
+    if (!cfg.port) { toast(t('pickPort'), 'err'); return; }
+    if (!baudVal()) { toast(t('baudEmpty'), 'err'); el.baudFree.focus(); return; }
+    if (!isFinite(cfg.baud) || cfg.baud <= 0) { toast(t('openFail').replace('{e}', 'baud'), 'err'); return; }
+    state.connecting = true;
+    el.btnConn.disabled = true;
+    el.btnConn.textContent = t('connecting');
+    toast(fill(t('opening'), { p: cfg.port, b: cfg.baud }));
+    vscode.postMessage({ type: 'open', config: cfg });
+    savePrefs();
+  }
+  function disconnect(){
+    vscode.postMessage({ type: 'close' });
+  }
+
+  /* ---------------- send ---------------- */
+  function payloadFor(text){
+    if (el.sendEnc.value === 'hex') {
+      var bytes = parseHex(text);
+      if (bytes === null) return { error: t('hexBad') };
+      if (!bytes.length) return { error: t('emptySend') };
+      return { bytes: bytes, echo: bytes.length + ' bytes' };
+    }
+    if (!text.length) return { error: t('emptySend') };
+    var eolMap = { none: '', cr: '\r', lf: '\n', crlf: '\r\n' };
+    var str = text + (eolMap[el.eol.value] || '');
+    return { bytes: textToBytes(str), echo: text };
+  }
+  function send(payload, label){
+    if (!payload || !payload.bytes) return;
+    if (!state.connected) { toast(t('needConn'), 'err'); return; }
+    vscode.postMessage({ type: 'send', data: bytesToBase64(payload.bytes) });
+    state.txBytes += payload.bytes.length;
+    var d = document.createElement('div');
+    d.className = 'ln tx';
+    if (stampOn()) d.appendChild(stampNode());
+    d.appendChild(document.createTextNode('→ ' + label));
+    el.log.appendChild(d);
+    state.line = null;
+    updateCounters(); trimLog(); scrollEnd();
+  }
+  function sendNow(){
+    var text = el.sendInput.value;
+    var r = payloadFor(text);
+    if (r.error) { toast(r.error, 'err'); return; }
+    state.lastPayload = r;
+    if (state.history[state.history.length - 1] !== text) {
+      state.history.push(text);
+      if (state.history.length > 50) state.history.shift();
+    }
+    state.histIdx = -1;
+    send(r, r.echo);
+  }
+  function startRepeat(){
+    var ms = Math.round(Number(String(el.repeatMs.value).trim() || '0'));
+    if (!isFinite(ms) || ms <= 0) return false;
+    if (ms < 20) ms = 20;
+    stopRepeat(true);
+    state.repeatTimer = setInterval(function(){
+      if (!state.connected) { stopRepeat(true); return; }
+      send(state.lastPayload, state.lastPayload ? state.lastPayload.echo : '');
+    }, ms);
+    el.btnSend.classList.add('on');
+    el.btnSend.textContent = t('stopBtn');
+    toast(fill(t('repeatOn'), { n: ms }), 'ok');
+    savePrefs();
+    return true;
+  }
+  function stopRepeat(silent){
+    if (state.repeatTimer) {
+      clearInterval(state.repeatTimer);
+      state.repeatTimer = null;
+      if (!silent) toast(t('repeatOff'));
+    }
+    el.btnSend.classList.remove('on');
+    el.btnSend.textContent = t('sendBtn');
+  }
+
+  /* ---------------- messages ---------------- */
+  window.addEventListener('message', function(ev){
+    var m = ev.data || {};
+    switch (m.type) {
+      case 'ports':
+        renderPorts(m.ports);
+        break;
+      case 'rx':
+        queueRx(base64ToBytes(m.data || ''));
+        break;
+      case 'openResult':
+        el.btnConn.disabled = false;
+        if (m.ok) {
+          setConnected(true, { port: m.port, baud: m.baud });
+          // Nothing received 4 s after opening: mention the control lines instead of leaving the user waiting
+          state.rxAtOpen = state.rxBytes;
+          clearTimeout(state.noDataTimer);
+          state.noDataTimer = setTimeout(function(){
+            if (state.connected && state.rxBytes === state.rxAtOpen) {
+              sysLine(t('noDataHint'), 'warn', 'noDataHint');
+            }
+          }, 4000);
+          sysLine(fill(t('opened'), { p: m.port, b: m.baud, f: fmtCfg() }), '', 'opened',
+                  { p: m.port, b: m.baud, f: fmtCfg() });
+          toast(fill(t('opened'), { p: m.port, b: m.baud, f: fmtCfg() }), 'ok');
+          el.sendInput.focus();
+        } else {
+          setConnected(false);
+          el.btnConn.textContent = t('connect');
+          toast(fill(t('openFail'), { e: m.error || '' }), 'err');
+          sysLine(fill(t('openFail'), { e: m.error || '' }), 'err', 'openFail', { e: m.error || '' });
+        }
+        break;
+      case 'closed':
+        clearTimeout(state.noDataTimer);
+        if (state.connected) {
+          setConnected(false);
+          var reason = String(m.reason || '');
+          var keyMap = { user: 'closedByUser', replaced: 'closedReplaced', panel: 'closedPanel' };
+          if (keyMap[reason]) {
+            sysLine(t(keyMap[reason]), '', keyMap[reason]);
+          } else if (reason.indexOf('exit:') === 0) {
+            var code = reason.slice(5);
+            sysLine(fill(t('closedExit'), { c: code }), '', 'closedExit', { c: code });
+          } else {
+            sysLine(fill(t('closedByHost'), { r: reason }), '', 'closedByHost', { r: reason });
+          }
+        }
+        break;
+      case 'bridgeError':
+        toast(t('sendFail').replace('{e}', m.message || ''), 'err');
+        break;
+      case 'sendFailed':
+        toast(t('sendFail').replace('{e}', m.error || ''), 'err');
+        break;
+      case 'clipboardText': {
+        var pasteTo = pendingPaste; pendingPaste = null;
+        if (!pasteTo) break;
+        var pasteTxt = String(m.text || '');
+        if (!pasteTxt) break;
+        var pa = pasteTo.selectionStart != null ? pasteTo.selectionStart : pasteTo.value.length;
+        var pb = pasteTo.selectionEnd != null ? pasteTo.selectionEnd : pa;
+        pasteTo.value = pasteTo.value.slice(0, pa) + pasteTxt + pasteTo.value.slice(pb);
+        pasteTo.selectionStart = pasteTo.selectionEnd = pa + pasteTxt.length;
+        pasteTo.dispatchEvent(new Event('input', { bubbles: true }));
+        pasteTo.focus();
+        break;
+      }
+      case 'saved':
+        toast(m.ok ? fill(t('saved'), { p: m.path || '' }) : t('saveFail'), m.ok ? 'ok' : 'err');
+        break;
+    }
+  });
+
+  /* ---------------- events ---------------- */
+  el.btnConn.addEventListener('click', function(){
+    if (state.connecting) return;
+    if (state.connected) disconnect(); else connect();
+  });
+  el.btnReload.addEventListener('click', function(){ scan(); });
+  el.btnClear.addEventListener('click', function(){
+    el.log.innerHTML = '';
+    clearTimeout(state.hexTimer);
+    clearTimeout(state.rxTimer);
+    state.hexTimer = null; state.rxTimer = null;
+    state.frag = null; state.lineCount = 0; state.lineSeq = 0;   // clearing also restarts row numbering
+    state.hist = []; state.histBase = 0; state.histChars = 0;     // drop the archive too
+    state.numDigits = 0; document.documentElement.style.removeProperty('--numw');
+    state.line = null; state.pending = ''; state.hexRest = []; state.hexOffset = 0;
+    state.rxQueue = []; state.rxQueued = 0;
+    state.rxBytes = 0; state.txBytes = 0;
+    state.dropped = 0; state.dropHinted = false; state.flushCost = 0;
+    state.pinBottom = true;
+    if (find.hits.length) { find.hits = []; find.idx = -1; find.allSig = ''; paintFind(); updateFindCount(); renderFindAll(); }
+    updateCounters(true);
+    toast(t('cleared'), 'ok');
+  });
+  el.btnCopy.addEventListener('click', function(){
+    vscode.postMessage({ type: 'copy', text: serializeLog() });
+    toast(t('copied'), 'ok');
+  });
+  el.btnSave.addEventListener('click', function(){
+    var stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    vscode.postMessage({ type: 'save', text: serializeLog(), name: 'serial-' + (el.port.value || 'uart') + '-' + stamp + '.txt' });
+  });
+  el.optHex.addEventListener('change', function(){
+    // Drop the partial line / remainder before switching views so the two formats do not bleed into each other
+    clearTimeout(state.hexTimer);
+    state.hexTimer = null;
+    state.line = null; state.pending = ''; state.hexRest = [];
+    state.hexOffset = state.rxBytes;
+    el.log.classList.toggle('wrap', el.optWrap.checked);
+    sysLine(el.optHex.checked ? t('hexView') : t('textView'), '', el.optHex.checked ? 'hexView' : 'textView');
+    savePrefs();
+  });
+  el.optWrap.addEventListener('change', function(){
+    el.log.classList.toggle('wrap', el.optWrap.checked);
+    savePrefs();
+  });
+  el.optTs.addEventListener('change', savePrefs);
+  el.optNums.addEventListener('change', function(){
+    el.log.classList.toggle('nums', el.optNums.checked);
+    savePrefs();
+  });
+  el.optAuto.addEventListener('change', function(){
+    savePrefs();
+    // Re-enabling auto-scroll means the user wants to follow again: jump straight to the bottom
+    if (el.optAuto.checked) { state.pinBottom = true; scrollEnd(); }
+  });
+  el.dtr.addEventListener('change', function(){
+    vscode.postMessage({ type: 'setLine', dtr: el.dtr.checked, rts: el.rts.checked });
+    savePrefs();
+  });
+  el.rts.addEventListener('change', function(){
+    vscode.postMessage({ type: 'setLine', dtr: el.dtr.checked, rts: el.rts.checked });
+    savePrefs();
+  });
+  el.btnReset.addEventListener('click', function(){
+    if (!state.connected) { sysLine(t('needConn'), 'warn'); return; }
+    vscode.postMessage({ type: 'resetPulse', dtr: el.dtr.checked, rts: el.rts.checked });
+    sysLine(t('resetSent'), 'warn', 'resetSent');
+  });
+  el.port.addEventListener('change', function(){ syncPortTitle(); savePrefs(); });
+  el.baud.addEventListener('change', function(){
+    el.baudFree.classList.toggle('show', el.baud.value === 'custom');
+    if (el.baud.value === 'custom') el.baudFree.focus();
+    el.statusCfg.textContent = fmtCfg(); savePrefs();
+  });
+  el.baudFree.addEventListener('input', function(){ el.statusCfg.textContent = fmtCfg(); });
+  el.baudFree.addEventListener('change', savePrefs);
+  [el.dataBits, el.parity, el.stopBits, el.flow].forEach(function(n){
+    n.addEventListener('change', function(){ el.statusCfg.textContent = fmtCfg(); savePrefs(); });
+  });
+  el.sendInput.addEventListener('keydown', function(e){
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (state.repeatTimer) stopRepeat(); else sendNow();
+      return;
+    }
+    if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+      if (!state.history.length) return;
+      e.preventDefault();
+      if (e.key === 'ArrowUp') state.histIdx = state.histIdx < 0 ? state.history.length - 1 : Math.max(0, state.histIdx - 1);
+      else state.histIdx = state.histIdx < 0 ? -1 : Math.min(state.history.length - 1, state.histIdx + 1);
+      el.sendInput.value = state.histIdx < 0 ? '' : state.history[state.histIdx];
+      el.sendInput.setSelectionRange(el.sendInput.value.length, el.sendInput.value.length);
+    }
+  });
+  el.btnSend.addEventListener('click', function(){
+    if (state.repeatTimer) { stopRepeat(); return; }
+    sendNow();
+    if (startRepeat()) return;
+  });
+  el.sendEnc.addEventListener('change', savePrefs);
+  el.eol.addEventListener('change', savePrefs);
+  el.repeatMs.addEventListener('change', savePrefs);
+  document.addEventListener('keydown', function(e){
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === 'f' || e.key === 'F')) {
+      e.preventDefault();
+      if (find.open) { el.findInput.focus(); el.findInput.select(); } else openFind();
+      return;
+    }
+    if (e.ctrlKey && !e.shiftKey && !e.altKey && (e.key === 'l' || e.key === 'L')) {
+      e.preventDefault();
+      el.btnClear.click();
+    }
+    if (e.key === 'Escape') {
+      if (find.open) { closeFind(); return; }
+      closeCtx();
+      el.veil.classList.remove('show');
+    }
+  });
+  // About dialog: version / date / four capability tiles, filled in on open (same approach as Binary Editor)
+  var APP_VER = '__BB_VER__', APP_DATE = '2026-11-02';
+  function renderAbout(){
+    $('aboutVer').textContent = APP_VER;
+    $('aboutDate').textContent = APP_DATE;
+    $('aboutGrid').innerHTML = ['1', '2', '3', '4'].map(function(i){
+      return '<div class="ab-item"><div class="t">' + esc(t('aboutT' + i)) + '</div>' +
+             '<div class="d">' + esc(t('aboutD' + i)) + '</div></div>';
+    }).join('');
+  }
+  el.btnAbout.addEventListener('click', function(){ renderAbout(); el.veil.classList.add('show'); });
+  el.veil.addEventListener('click', function(e){ if (e.target === el.veil) el.veil.classList.remove('show'); });
+  $('btnAboutClose').addEventListener('click', function(){ el.veil.classList.remove('show'); });
+  el.veil.addEventListener('click', function(e){ if (e.target === el.veil) el.veil.classList.remove('show'); });
+
+  el.btnLang.addEventListener('click', function(){
+    lang = lang === 'zh' ? 'en' : 'zh';
+    applyLang();
+    savePrefs();
+    if (state.connected) setConnected(true, { port: state.portName, baud: baudVal() });
+  });
+
+  /* ---------------- i18n ---------------- */
+  function applyLang(){
+    document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
+    el.btnLang.textContent = lang === 'zh' ? 'EN' : '中文';
+    Array.prototype.forEach.call(document.querySelectorAll('[data-i18n]'), function(n){
+      n.textContent = t(n.getAttribute('data-i18n'));
+    });
+    Array.prototype.forEach.call(document.querySelectorAll('[data-i18n-title]'), function(n){
+      n.title = t(n.getAttribute('data-i18n-title'));
+    });
+    Array.prototype.forEach.call(document.querySelectorAll('[data-i18n-ph]'), function(n){
+      n.placeholder = t(n.getAttribute('data-i18n-ph'));
+    });
+    el.connText.textContent = state.connected ? t('connected') : t('disconnected');
+    el.btnConn.textContent = state.connecting ? t('connecting') : (state.connected ? t('disconnect') : t('connect'));
+    el.btnSend.textContent = state.repeatTimer ? t('stopBtn') : t('sendBtn');
+    el.statusCfg.textContent = fmtCfg();
+    var cOpt = el.baud.querySelector('option[value="custom"]');
+    if (cOpt) cOpt.textContent = t('baudCustom');
+    if (state.ports && state.ports.length) renderPorts(state.ports, true);
+    // System rows already printed in the log (ready / connected / open failed ...) must switch language too
+    Array.prototype.forEach.call(el.log.querySelectorAll('.ln.sys[data-k]'), function(n){
+      var key = n.getAttribute('data-k');
+      var vars = null;
+      try { vars = JSON.parse(n.getAttribute('data-v') || 'null'); } catch (e) { vars = null; }
+      var span = n.querySelector('.txt');
+      if (span) span.textContent = vars ? fill(t(key), vars) : t(key);
+      // This row also exists in the full archive, so update it there or searches keep returning the old language
+      var no = +n.getAttribute('data-n');
+      if (no > 0) {
+        var hi = no - 1 - state.histBase;
+        if (hi >= 0 && hi < state.hist.length) {
+          var fresh = n.textContent || '';
+          state.histChars += fresh.length - state.hist[hi].length;
+          state.hist[hi] = fresh;
+        }
+      }
+    });
+    // The "find results" summary is written by script ({n} places / {n} matches), so repaint it on language change
+    if (find.allOpen) { find.allSig = ''; renderFindAll(); }
+  }
+
+  /* ---------------- find (Ctrl+F): archive-wide match + jump + highlight ---------------- */
+  /* Highlights are drawn with the CSS Custom Highlight API: no DOM mutation, so the "build a frame
+     then append" pipeline below is left alone; runtimes without it fall back to selecting the match.
+     The search covers state.hist - **every** line ever captured, regardless of what is still on screen:
+     the log keeps only the last 1200 rows to stay fast, but Find must start from the very first byte. */
+  var FIND_MAX = 3000;
+  var find = { open: false, q: '', hits: [], idx: -1, timer: 0, allOpen: false };
+  var canHL = !!(window.CSS && CSS.highlights && typeof Highlight === 'function');
+
+  /* Is archive row i still on screen? If so return its node (both highlight and jump need it) */
+  function domFor(i){
+    var first = el.log.firstElementChild;
+    if (!first) return null;
+    var n0 = parseInt(first.getAttribute('data-n'), 10);
+    if (!(n0 > 0)) return null;
+    var k = i - (n0 - 1 - state.histBase);
+    return (k >= 0 && k < el.log.children.length) ? el.log.children[k] : null;
+  }
+  /* Build a Range from a character offset inside a row: rows also hold a timestamp span, so walk the text nodes and accumulate */
+  function rangeIn(node, off, len){
+    var walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT, null), t, acc = 0;
+    var sn = null, so = 0, en = null, eo = 0;
+    while ((t = walker.nextNode())){
+      var L = t.nodeValue.length;
+      if (!sn && off >= acc && off <= acc + L) { sn = t; so = off - acc; }
+      if (sn && off + len <= acc + L) { en = t; eo = off + len - acc; break; }
+      acc += L;
+    }
+    if (!sn || !en) return null;
+    var r = document.createRange();
+    r.setStart(sn, so); r.setEnd(en, eo);
+    return r;
+  }
+  /* Scan the archive row by row; each hit is { i: archive index, off: offset within the row, n: row number } */
+  function buildFindIndex(){
+    var needle = find.q.toLowerCase(), hits = [], i, at, k, t;
+    for (i = 0; i < state.hist.length && hits.length < FIND_MAX; i++){
+      t = state.hist[i];
+      if (!t) continue;
+      t = t.toLowerCase();
+      at = 0;
+      while ((k = t.indexOf(needle, at)) >= 0){
+        hits.push({ i: i, off: k, n: state.histBase + i + 1 });
+        at = k + needle.length;
+        if (hits.length >= FIND_MAX) break;
+      }
+    }
+    return hits;
+  }
+  function paintFind(){
+    if (!canHL) return;
+    try {
+      CSS.highlights.delete('sc-find');
+      CSS.highlights.delete('sc-find-cur');
+      if (!find.hits.length) return;
+      var all = new Highlight(), i, h, r, node;
+      for (i = 0; i < find.hits.length; i++){
+        h = find.hits[i];
+        node = domFor(h.i);
+        if (!node) continue;                    // already scrolled out of the buffer: only listed in the result panel
+        r = rangeIn(node, h.off, find.q.length);
+        if (r) all.add(r);
+      }
+      CSS.highlights.set('sc-find', all);
+      var cur = null;
+      if (find.idx >= 0 && find.hits[find.idx]){
+        node = domFor(find.hits[find.idx].i);
+        if (node) cur = rangeIn(node, find.hits[find.idx].off, find.q.length);
+      }
+      if (cur) CSS.highlights.set('sc-find-cur', new Highlight(cur));
+    } catch (e) { /* log trimming invalidated the range: drop the highlight, keep the jump */ }
+  }
+  function updateFindCount(){
+    var n = find.hits.length;
+    el.findCount.textContent = n && find.idx >= 0 ? (find.idx + 1) + '/' + n : '0/' + n;
+    el.findBar.classList.toggle('none', !n && !!find.q);
+  }
+  // jump=true: jump to the first hit after the term changes; false: the log is growing, so hold the current hit in place
+  function runFind(jump){
+    var keepAt = (find.idx >= 0 && find.hits[find.idx]) ? find.hits[find.idx].n : -1;
+    find.q = el.findInput.value;
+    find.hits = []; find.idx = -1;
+    if (!find.q) {
+      paintFind(); updateFindCount();
+      if (find.allOpen) renderFindAll();
+      return;
+    }
+    find.hits = buildFindIndex();
+    if (find.hits.length) {
+      find.idx = 0;
+      if (!jump && keepAt >= 0) {
+        for (var j = 0; j < find.hits.length; j++) if (find.hits[j].n >= keepAt) { find.idx = j; break; }
+      }
+    }
+    paintFind(); updateFindCount();
+    if (find.allOpen) renderFindAll();
+    if (jump && find.idx >= 0) gotoHit(0, true);
+  }
+  /* ---------------- history view ----------------
+     The log keeps only MAX_LINES rows of DOM; everything older survives as text in state.hist.
+     Double-clicking a hit that scrolled away rebuilds a read-only window on demand, and the banner
+     on top returns to live - so "click a result, see that line" without keeping tens of thousands of rows. */
+  function histRow(text, n){
+    var d = document.createElement('div');
+    d.className = 'ln';
+    d.setAttribute('data-n', String(n));
+    d.textContent = text;
+    return d;
+  }
+
+  function showHistWindow(i){
+    var total = state.hist.length;
+    if (!total) return;
+    i = Math.max(0, Math.min(i, total - 1));
+    var from = Math.max(0, i - 120), to = Math.min(total, i + 180);
+    state.histView = { from: from, to: to };
+    state.line = null;
+    state.pinBottom = false;
+
+    el.log.textContent = '';
+    var frag = document.createDocumentFragment();
+    for (var k = from; k < to; k++) frag.appendChild(histRow(state.hist[k], state.histBase + k + 1));
+    el.log.appendChild(frag);
+    state.lineCount = el.log.childNodes.length;
+
+    var target = el.log.children[i - from];
+    if (target) {
+      el.log.scrollTop = Math.max(0, target.offsetTop - el.log.clientHeight / 2);
+      target.classList.add('histTarget');
+      setTimeout(function(){ target.classList.remove('histTarget'); }, 1600);
+    }
+    showHistBar(from, to);
+  }
+
+  function showHistBar(from, to){
+    var bar = document.getElementById('histBar');
+    if (!bar) {
+      bar = document.createElement('div');
+      bar.id = 'histBar';
+      if (el.logWrap) {
+        if (getComputedStyle(el.logWrap).position === 'static') el.logWrap.style.position = 'relative';
+        el.logWrap.appendChild(bar);
+      }
+    }
+    bar.textContent = '';
+    var msg = document.createElement('span');
+    msg.textContent = fill(t('histShown'), { a: state.histBase + from + 1, b: state.histBase + to });
+    var grow = document.createElement('span');
+    grow.className = 'grow';
+    var btn = document.createElement('button');
+    btn.textContent = t('histBack');
+    btn.addEventListener('click', exitHistView);
+    bar.appendChild(msg); bar.appendChild(grow); bar.appendChild(btn);
+  }
+
+  function exitHistView(){
+    if (!state.histView) return;
+    state.histView = null;
+    var bar = document.getElementById('histBar');
+    if (bar) bar.remove();
+
+    el.log.textContent = '';
+    state.line = null;
+    var from = Math.max(0, state.hist.length - MAX_LINES);
+    var frag = document.createDocumentFragment();
+    for (var k = from; k < state.hist.length; k++) frag.appendChild(histRow(state.hist[k], state.histBase + k + 1));
+    el.log.appendChild(frag);
+    state.lineCount = el.log.childNodes.length;
+    scrollEnd();
+    if (find.open && find.q) paintFind();
+  }
+
+  function gotoHit(i, noRepaint){
+    var n = find.hits.length;
+    if (!n) return;
+    find.idx = ((i % n) + n) % n;
+    if (!noRepaint) { paintFind(); updateFindCount(); }
+    var h = find.hits[find.idx], node = domFor(h.i);
+    if (!node){                                  // this row already scrolled out of the 1200-row display buffer
+      markFindAll();
+      showHistWindow(h.i);                       // rebuild a window from the full archive, still viewable
+      return;
+    }
+    var lr = el.log.getBoundingClientRect(), rr = node.getBoundingClientRect();
+    el.log.scrollTop += (rr.top - lr.top) - Math.max(0, (lr.height - rr.height) / 2);
+    state.pinBottom = false;
+    if (!canHL) {
+      var r2 = rangeIn(node, h.off, find.q.length), s = window.getSelection();
+      if (r2 && s) { s.removeAllRanges(); s.addRange(r2); }
+    }
+    markFindAll();
+  }
+  function openFind(){
+    find.open = true;
+    el.findBar.classList.add('show');
+    var s = window.getSelection();
+    if (s && !s.isCollapsed) {
+      var pick = String(s).replace(/\s+/g, ' ').trim();
+      if (pick && pick.length <= 80) el.findInput.value = pick;   // search whatever is selected first
+    }
+    el.findInput.focus();
+    el.findInput.select();
+    if (el.findInput.value) runFind(true);
+    else updateFindCount();
+  }
+  function closeFind(){
+    find.open = false;
+    el.findBar.classList.remove('show');
+    find.hits = []; find.idx = -1;
+    paintFind(); updateFindCount();
+    closeFindAll();
+    el.log.focus();
+  }
+  function stepFind(step){
+    if (!find.hits.length) { runFind(true); return; }
+    gotoHit(find.idx + step);
+  }
+
+  /* ---------------- find all: bottom result panel ---------------- */
+  /* Hits come from the whole archive; clicking a row jumps there (rows outside the buffer only show here) */
+  var FR_MAX = 2000;                 // max rows drawn, extra hits only get a notice (plenty within the 3000-hit cap)
+  function renderFindAll(){
+    if (!find.allOpen) return;
+    var q = find.q, n = find.hits.length;
+    el.frSum.textContent = !q ? '' : (n ? fill(t('frCount'), { n: n }) : t('frNone'));
+    el.frSum.className = n ? '' : 'none';
+    var box = el.frList;
+    /* Do not rebuild for the same hit set (the port keeps streaming, so this runs every 400 ms):
+       when count + first/last row number + query are unchanged, just mark the current row */
+    var sig = n + ':' + q + ':' + (n ? find.hits[0].n + ':' + find.hits[n - 1].n : '');
+    if (find.allSig === sig && box.children.length) { markFindAll(); return; }
+    find.allSig = sig;
+    box.innerHTML = '';
+    if (!n) return;
+    var frag = document.createDocumentFragment(), upto = Math.min(n, FR_MAX), i;
+    for (i = 0; i < upto; i++){
+      var h = find.hits[i], full = state.hist[h.i] || '';
+      var row = document.createElement('div');
+      row.className = 'frRow' + (i === find.idx ? ' cur' : '');
+      row.setAttribute('data-i', String(i));
+      if (!domFor(h.i)) row.className += ' gone';       // scrolled off screen: dim it
+      var ln = document.createElement('span');
+      ln.className = 'fln';
+      ln.textContent = String(h.n);
+      var off = h.off, s0 = Math.max(0, off - 64);
+      var s1 = Math.min(full.length, off + q.length + 96);
+      var tx = document.createElement('span');
+      tx.className = 'ftx';
+      tx.title = full;
+      tx.innerHTML = (s0 > 0 ? '…' : '') + esc(full.slice(s0, off))
+        + '<mark>' + esc(full.substr(off, q.length)) + '</mark>'
+        + esc(full.slice(off + q.length, s1)) + (s1 < full.length ? '…' : '');
+      row.appendChild(ln); row.appendChild(tx);
+      frag.appendChild(row);
+    }
+    box.appendChild(frag);
+    if (n > upto) {
+      var more = document.createElement('div');
+      more.className = 'frRow';
+      more.style.cursor = 'default';
+      more.textContent = fill(t('frMore'), { n: upto });
+      box.appendChild(more);
+    }
+    markFindAll();
+  }
+  // Mark the current hit in the result panel and scroll it into view
+  function markFindAll(){
+    if (!find.allOpen) return;
+    var rows = el.frList.children;
+    for (var i = 0; i < rows.length; i++) {
+      var on = rows[i].getAttribute('data-i') === String(find.idx);
+      rows[i].classList.toggle('cur', on);
+      if (on && rows[i].scrollIntoView) { try { rows[i].scrollIntoView({ block: 'nearest' }); } catch (e) {} }
+    }
+  }
+  function openFindAll(){
+    if (!el.findBar.classList.contains('show')) openFind();   // open the find bar first if closed (it picks up the selection)
+    find.allOpen = true;
+    el.findRes.classList.add('show');
+    el.resSplit.classList.add('show');
+    applyResH();
+    if (!find.q || find.q !== el.findInput.value || !find.hits.length) runFind(true);
+    renderFindAll();
+  }
+  function closeFindAll(){
+    find.allOpen = false;
+    find.allSig = '';
+    el.findRes.classList.remove('show');
+    el.resSplit.classList.remove('show');
+    el.frList.innerHTML = '';
+    el.frSum.textContent = '';
+  }
+  el.btnFind.addEventListener('click', function(){ if (find.open) closeFind(); else openFind(); });
+  el.findInput.addEventListener('input', function(){
+    clearTimeout(find.timer);
+    find.timer = setTimeout(function(){ runFind(true); }, 160);
+  });
+  el.findInput.addEventListener('keydown', function(e){
+    if (e.key === 'Enter') { e.preventDefault(); stepFind(e.shiftKey ? -1 : 1); }
+    else if (e.key === 'Escape') { e.preventDefault(); closeFind(); }
+  });
+  $('findPrev').addEventListener('click', function(){ stepFind(-1); el.findInput.focus(); });
+  el.findAll.addEventListener('click', function(){ if (find.allOpen) closeFindAll(); else openFindAll(); });
+  el.frClose.addEventListener('click', function(){ closeFindAll(); el.log.focus(); });
+  el.frList.addEventListener('click', function(e){
+    var row = e.target && e.target.closest ? e.target.closest('.frRow') : null;
+    var i = row ? +row.getAttribute('data-i') : -1;
+    if (!(i >= 0)) return;                 // the "only the first N shown" row carries no data-i
+    gotoHit(i);
+  });
+  /* Double-click a hit: jump even when the target scrolled out of the display buffer (via the history window) */
+  el.frList.addEventListener('dblclick', function(e){
+    var row = e.target && e.target.closest ? e.target.closest('.frRow') : null;
+    var i = row ? +row.getAttribute('data-i') : -1;
+    if (!(i >= 0)) return;
+    find.idx = i;
+    gotoHit(i);
+  });
+  $('findNext').addEventListener('click', function(){ stepFind(1); el.findInput.focus(); });
+  $('findClose').addEventListener('click', closeFind);
+
+  /* ---------------- result panel height: drag the splitter up and down ---------------- */
+  /* Panel height lives in prefs; until it has been dragged, use 35% of the log area (never below 90px) */
+  function resDefaultH(){
+    var h = el.logWrap ? el.logWrap.getBoundingClientRect().height : 400;
+    return Math.max(90, Math.round(h * 0.35));
+  }
+  function applyResH(){
+    var wrap = el.logWrap ? el.logWrap.getBoundingClientRect().height : 600;
+    var h = state.resH || resDefaultH();
+    h = Math.max(90, Math.min(Math.round(wrap * 0.82), Math.round(h)));   // keep the log visible even when the window shrinks
+    el.findRes.style.height = h + 'px';
+  }
+  function setResH(h, keep){
+    var wrap = el.logWrap ? el.logWrap.getBoundingClientRect().height : 600;
+    h = Math.max(90, Math.min(Math.round(wrap * 0.82), Math.round(h)));
+    state.resH = h;
+    applyResH();
+    if (!keep) { try { vscode.postMessage({ type: 'savePrefs', prefs: prefsNow() }); } catch (e) {} }
+  }
+  window.addEventListener('resize', function(){ if (find.allOpen) applyResH(); });
+  (function splitDrag(){
+    var sp = el.resSplit, drag = false, y0 = 0, h0 = 0;
+    sp.addEventListener('pointerdown', function(e){
+      drag = true; y0 = e.clientY; h0 = el.findRes.getBoundingClientRect().height;
+      sp.classList.add('drag');
+      try { sp.setPointerCapture(e.pointerId); } catch (err) {}
+      e.preventDefault();
+    });
+    sp.addEventListener('pointermove', function(e){
+      if (!drag) return;
+      setResH(h0 - (e.clientY - y0), true);
+    });
+    function end(){ if (!drag) return; drag = false; sp.classList.remove('drag'); setResH(state.resH || resDefaultH(), false); }
+    sp.addEventListener('pointerup', end);
+    sp.addEventListener('pointercancel', end);
+    sp.addEventListener('dblclick', function(){ setResH(resDefaultH(), false); });
+  })();
+
+  /* ---------------- context menu: drawn by hand so it follows the language setting ---------------- */
+  /* VS Code's built-in webview context menu follows the editor language and ignores the extension's
+     zh/en switch, so the native menu is swallowed here and an own one is drawn (same as Binary Editor) */
+  var ctxTarget = null, pendingPaste = null;
+  function editableOf(node){
+    var e = node && (node.nodeType === 1 ? node : node.parentNode);
+    if (!e || !e.tagName) return null;
+    return (e.tagName === 'INPUT' || e.tagName === 'TEXTAREA' || e.isContentEditable) ? e : null;
+  }
+  function selText(){
+    var ed = editableOf(ctxTarget);
+    if (ed && ed.selectionStart != null && ed.selectionEnd > ed.selectionStart)
+      return ed.value.slice(ed.selectionStart, ed.selectionEnd);
+    var s = window.getSelection();
+    if (s && s.rangeCount && !s.isCollapsed) return String(s);
+    return '';
+  }
+  function closeCtx(){ $('ctxMenu').classList.remove('show'); }
+  function showCtx(e){
+    if (el.veil.classList.contains('show')) return;      // no menu over the About dialog
+    ctxTarget = e.target;
+    var ed = editableOf(ctxTarget), has = !!selText();
+    $('ctxCut').disabled = !(ed && has);
+    $('ctxCopy').disabled = !has;
+    $('ctxPaste').disabled = !ed;
+    var m = $('ctxMenu');
+    m.classList.add('show');
+    var r = m.getBoundingClientRect();
+    m.style.left = Math.max(6, Math.min(e.clientX, window.innerWidth - r.width - 6)) + 'px';
+    m.style.top = Math.max(6, Math.min(e.clientY, window.innerHeight - r.height - 6)) + 'px';
+  }
+  document.addEventListener('contextmenu', function(e){
+    e.preventDefault();                                   // suppress the native menu
+    showCtx(e);
+  });
+  document.addEventListener('mousedown', function(e){
+    if (!e.target.closest || !e.target.closest('#ctxMenu')) closeCtx();
+  }, true);
+  window.addEventListener('blur', closeCtx);
+  el.log.addEventListener('scroll', closeCtx, { passive: true });
+  function ctxCopySel(){
+    var s = selText();
+    if (!s) { toast(t('copyFirst'), 'err'); return false; }
+    vscode.postMessage({ type: 'copy', text: s });
+    return true;
+  }
+  $('ctxCopy').addEventListener('click', function(){
+    if (ctxCopySel()) toast(t('copied'), 'ok');
+    closeCtx();
+  });
+  $('ctxCut').addEventListener('click', function(){
+    if (!ctxCopySel()) { closeCtx(); return; }
+    var ed = editableOf(ctxTarget);
+    if (ed) {
+      var a = ed.selectionStart, b = ed.selectionEnd;
+      ed.value = ed.value.slice(0, a) + ed.value.slice(b);
+      ed.selectionStart = ed.selectionEnd = a;
+      ed.dispatchEvent(new Event('input', { bubbles: true }));
+    } else {
+      var s = window.getSelection(); if (s) s.deleteFromDocument();
+    }
+    toast(t('cutDone'), 'ok');
+    closeCtx();
+  });
+  $('ctxPaste').addEventListener('click', function(){
+    var ed = editableOf(ctxTarget);
+    closeCtx();
+    if (!ed) return;
+    pendingPaste = ed;
+    vscode.postMessage({ type: 'paste' });                // the extension process reads the clipboard, the webview cannot
+  });
+  $('ctxSelectAll').addEventListener('click', function(){
+    closeCtx();
+    var ed = editableOf(ctxTarget);
+    if (ed) { ed.focus(); if (ed.select) ed.select(); return; }
+    var r = document.createRange(); r.selectNodeContents(el.log);
+    var s = window.getSelection(); if (s) { s.removeAllRanges(); s.addRange(r); }
+  });
+  $('ctxFind').addEventListener('click', function(){ closeCtx(); openFind(); });
+
+  /* ---------------- startup ---------------- */
+  buildSelects();
+  applyPrefs();
+  applyLang();
+  updateCounters(true);
+  sysLine(t('greeting'), '', 'greeting');
+  vscode.postMessage({ type: 'ready' });
+
+  // Probe for automated tests (no effect on normal use)
+  window.__serial = { state: state, parseHex: parseHex, toHex: toHex, fmtBytes: fmtBytes, serialize: serializeLog };
+})();
+</script>
+</body>
+</html>
