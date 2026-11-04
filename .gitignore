@@ -1,0 +1,9 @@
+# Dependencies: installed with npm, never stored in the repo
+node_modules/
+
+# Build output of the extension itself
+*.vsix
+
+# Screenshots and probe pages used only while developing
+.tmp-shot/
+.tmpprobe/
